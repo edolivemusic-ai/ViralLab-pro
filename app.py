@@ -43,7 +43,6 @@ def process_video_advanced(input_path, platform, content_type):
     clip = mp.VideoFileClip(input_path)
     target_w, target_h = FORMAT_CONFIG[platform][content_type]
     
-    # Ridimensionamento intelligente (Auto-Crop)
     clip_resized = clip.resize(height=target_h)
     if clip_resized.w > target_w:
         clip_final = clip_resized.crop(x_center=clip_resized.w/2, width=target_w)
@@ -57,19 +56,11 @@ col_sidebar, col_main = st.columns([1, 2])
 
 with col_sidebar:
     st.header("⚙️ Preferenze")
-    
-    category = st.selectbox("Cosa hai filmato?", [
-        "DJ Set", "Musica dal Vivo", "Karaoke", "Wedding Music", "Wedding Band"
-    ])
-    
+    category = st.selectbox("Cosa hai filmato?", ["DJ Set", "Musica dal Vivo", "Karaoke", "Wedding Music", "Wedding Band"])
     platform = st.selectbox("Piattaforma", ["Instagram", "TikTok", "Facebook"])
     content_type = st.radio("Tipo di Contenuto", ["Reels", "Storie", "Post"])
-    
     st.divider()
-    
-    uploaded_files = st.file_uploader("📤 trascina qui i video (anche multipli)", 
-                                     type=["mp4", "mov"], 
-                                     accept_multiple_files=True)
+    uploaded_files = st.file_uploader("📤 trascina qui i video", type=["mp4", "mov"], accept_multiple_files=True)
 
 # --- PROCESSO BATCH ---
 if uploaded_files and st.button("✨ GENERA CONTENUTI VIRALI"):
@@ -83,53 +74,51 @@ if uploaded_files and st.button("✨ GENERA CONTENUTI VIRALI"):
                 path = tfile.name
 
             # 2. Caricamento su Google AI
-            model = genai.GenerativeModel('gemini-1.5-flash')
-            video_ai = genai.upload_file(path=path)
-            
-            # 3. ATTESA ELABORAZIONE GOOGLE (Risolve errore NotFound)
-            status.update(label="L'AI sta analizzando la musica e i movimenti...", state="running")
-            while video_ai.state.name == "PROCESSING":
-                time.sleep(2)
-                video_ai = genai.get_file(video_ai.name)
-            
-            if video_ai.state.name == "FAILED":
-                st.error(f"Errore Google AI sul video {uploaded_file.name}")
-                continue
-
-            # 4. Prompt Strategico
-            prompt = f"""
-            Sei un esperto Social Media Manager per {category}.
-            Ottimizza questo video per {platform} ({content_type}).
-            Analizza il ritmo e le emozioni (es. drop del dj, acuti del cantante, balli degli sposi).
-            Identifica il momento più virale tra i 7 e i 12 secondi.
-            
-            Restituisci SOLO un JSON:
-            {{
-              "start": secondo d'inizio,
-              "end": secondo di fine,
-              "hook_text": "titolo gancio",
-              "caption": "caption virale con emoji per {platform}",
-              "hashtags": "hashtag strategici",
-              "viral_reason": "perché questo taglio funzionerà"
-            }}
-            """
-            
-            response = model.generate_content([video_ai, prompt])
-            
             try:
-                # Estrazione JSON
+                model = genai.GenerativeModel('gemini-1.5-flash')
+                video_ai = genai.upload_file(path=path)
+                
+                # 3. ATTESA ROBUSTA ELABORAZIONE
+                while True:
+                    file_info = genai.get_file(video_ai.name)
+                    if file_info.state.name == "ACTIVE":
+                        break
+                    elif file_info.state.name == "FAILED":
+                        st.error(f"Errore Google nell'elaborazione del video {uploaded_file.name}")
+                        st.stop()
+                    status.update(label=f"Analisi video in corso ({file_info.state.name})...")
+                    time.sleep(3)
+                
+                # Attesa extra per sincronizzazione API
+                time.sleep(2)
+
+                # 4. Prompt Strategico
+                prompt = f"""
+                Sei un esperto Social Media Manager per {category}.
+                Ottimizza questo video per {platform} ({content_type}).
+                Restituisci SOLO un JSON:
+                {{
+                  "start": secondo d'inizio (numero),
+                  "end": secondo di fine (numero),
+                  "hook_text": "titolo gancio",
+                  "caption": "caption virale",
+                  "hashtags": "hashtag strategici",
+                  "viral_reason": "perché funzionerà"
+                }}
+                """
+                
+                # Tentativo di generazione con retry
+                response = model.generate_content([video_ai, prompt])
                 data = json.loads(re.search(r'\{.*\}', response.text, re.DOTALL).group())
                 
                 # 5. Montaggio Video Fisico
-                status.update(label=f"Ritagliando video per {platform}...", state="running")
+                status.update(label=f"Montaggio {platform}...", state="running")
                 edited_clip = process_video_advanced(path, platform, content_type)
                 
-                # Controllo durata video
                 v_start = float(data['start'])
                 v_end = min(float(data['end']), edited_clip.duration)
                 
                 final_video = edited_clip.subclip(v_start, v_end)
-                
                 out_path = f"viral_{uploaded_file.name}"
                 final_video.write_videofile(out_path, codec="libx264", audio_codec="aac", fps=30, logger=None)
                 
@@ -142,11 +131,14 @@ if uploaded_files and st.button("✨ GENERA CONTENUTI VIRALI"):
                             with open(out_path, "rb") as f:
                                 st.download_button(f"📥 SCARICA", f, file_name=f"{platform}_{uploaded_file.name}")
                         with t_col:
-                            st.markdown(f"**🎯 Strategia:** {data['viral_reason']}")
+                            st.success(f"**Strategia:** {data['viral_reason']}")
                             st.markdown(f"**🪝 Hook:** `{data['hook_text']}`")
                             st.code(f"{data['caption']}\n\n{data['hashtags']}", language="text")
                 
             except Exception as e:
-                st.error(f"Errore durante il montaggio di {uploaded_file.name}: {e}")
+                st.error(f"Errore su {uploaded_file.name}: {str(e)}")
             finally:
                 if os.path.exists(path): os.remove(path)
+                # Pulisce il file dai server Google per non occupare spazio
+                try: genai.delete_file(video_ai.name)
+                except: pass

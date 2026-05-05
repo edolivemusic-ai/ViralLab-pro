@@ -1,7 +1,7 @@
 import streamlit as st
 import google.generativeai as genai
 import moviepy.editor as mp
-import tempfile, os, json, re, time
+import tempfile, os, json, time
 from google.api_core import exceptions
 
 # --- CONFIGURAZIONE ---
@@ -28,14 +28,21 @@ FORMAT_MAP = {
 
 # --- FUNZIONE MONTAGGIO ---
 def auto_edit(path, plat, ctype, start, end):
-    with mp.VideoFileClip(path) as video:
-        tw, th = FORMAT_MAP[plat][ctype]
-        s, e = max(0, float(start)), min(float(end), video.duration)
-        clip = video.subclip(s, e).resize(height=th)
-        final = clip.crop(x_center=clip.w/2, width=tw) if clip.w > tw else clip
-        out = f"final_{int(time.time())}.mp4"
-        final.write_videofile(out, codec="libx264", audio_codec="aac", fps=24, logger=None, preset='ultrafast', threads=1)
-        return out
+    try:
+        with mp.VideoFileClip(path) as video:
+            tw, th = FORMAT_MAP[plat][ctype]
+            s = max(0, float(start))
+            e = min(float(end), video.duration)
+            if e <= s: e = s + 10 # Sicurezza durata
+            
+            clip = video.subclip(s, e).resize(height=th)
+            final = clip.crop(x_center=clip.w/2, width=tw) if clip.w > tw else clip
+            out = f"final_{int(time.time())}.mp4"
+            final.write_videofile(out, codec="libx264", audio_codec="aac", fps=24, logger=None, preset='ultrafast', threads=1)
+            return out
+    except Exception as e:
+        st.error(f"Errore tecnico nel montaggio: {e}")
+        return None
 
 # --- INTERFACCIA ---
 with st.sidebar:
@@ -53,40 +60,52 @@ if files and st.button("✨ GENERA VIDEO"):
         p = t.name
         v_ai = None
         try:
-            with st.status(f"Elaborando {f.name}") as stt:
+            with st.status(f"Analizzando {f.name}...") as stt:
                 v_ai = genai.upload_file(path=p)
                 while True:
                     inf = genai.get_file(v_ai.name)
                     if inf.state.name == "ACTIVE": break
                     time.sleep(5)
                 
-                time.sleep(10) # Pausa anti-crash
-                model = genai.GenerativeModel('gemini-1.5-flash')
-                prompt = f"Sei esperto {cat}. Analizza per {plat} {ctype}. Trova clip 10s. Rispondi SOLO JSON: {{'start': sec, 'end': sec, 'caption': 'testo'}}"
+                time.sleep(12) # Pausa estesa per stabilità
                 
-                raw = ""
+                # CONFIGURAZIONE MODELLO PER RISPOSTA JSON PURA
+                model = genai.GenerativeModel(
+                    model_name='gemini-1.5-flash',
+                    generation_config={"response_mime_type": "application/json"}
+                )
+                
+                prompt = f"""
+                Sei un esperto video editor per {cat}. Trova la clip più virale (7-12 secondi).
+                Ritorna un oggetto JSON con queste chiavi esatte:
+                "start": (numero secondi),
+                "end": (numero secondi),
+                "caption": "testo virale per {plat}"
+                """
+                
+                data = None
                 for att in range(4):
                     try:
                         resp = model.generate_content([v_ai, prompt])
-                        raw = resp.text
+                        data = json.loads(resp.text)
                         break
-                    except exceptions.NotFound:
-                        time.sleep(8)
+                    except (exceptions.NotFound, json.JSONDecodeError):
+                        stt.update(label=f"Sincronizzazione in corso... ({att+1})")
+                        time.sleep(10)
                 
+                if not data:
+                    st.error(f"L'AI non è riuscita a generare i tempi per {f.name}")
+                    continue
+
                 stt.update(label="Montaggio fisico in corso...")
-                data = json.loads(re.search(r'\{.*\}', raw, re.DOTALL).group())
                 out = auto_edit(p, plat, ctype, data['start'], data['end'])
                 
-                with res_cons:
-                    st.success(f"✅ {f.name} PRONTO")
-                    c1, c2 = st.columns(2)
-                    with c1: st.video(out)
-                    with c2: 
-                        st.code(data['caption'])
-                        with open(out, "rb") as o_file:
-                            st.download_button("Scarica", o_file, file_name=f"viral_{f.name}")
-                stt.update(label="Fatto!", state="complete")
-        except Exception as err: st.error(f"Errore: {err}")
-        finally:
-            if os.path.exists(p): os.remove(p)
-            if v_ai: genai.delete_file(v_ai.name)
+                if out:
+                    with res_cons:
+                        st.success(f"✅ {f.name} PRONTO")
+                        c1, c2 = st.columns(2)
+                        with c1: st.video(out)
+                        with c2: 
+                            st.code(data['caption'])
+                            with open(out, "rb") as o_file:
+                                st.download_button(f"Scarica {f.name}", o_file, fil

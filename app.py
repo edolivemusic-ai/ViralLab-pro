@@ -2,6 +2,11 @@ import streamlit as st
 import google.generativeai as genai
 import moviepy.editor as mp
 import tempfile, os, json, time
+import PIL.Image
+
+# --- PATCH PER COMPATIBILITÀ MOVIEPY ---
+if not hasattr(PIL.Image, 'ANTIALIAS'):
+    PIL.Image.ANTIALIAS = PIL.Image.LANCZOS
 
 # --- CONFIGURAZIONE ---
 st.set_page_config(page_title="Music Viral Lab Pro", layout="wide")
@@ -14,22 +19,15 @@ if not api_key:
     st.error("Inserisci la API KEY nei Secrets.")
     st.stop()
 
-# Configurazione API
 genai.configure(api_key=api_key)
 
-# AUTO-DIAGNOSI: Trova il modello giusto per te
+# AUTO-DIAGNOSI MODELLI
 try:
     models = [m.name for m in genai.list_models() if 'generateContent' in m.supported_generation_methods]
-    # Cerchiamo prima il flash (veloce), poi il pro, altrimenti il primo disponibile
-    if 'models/gemini-1.5-flash' in models:
-        active_model = 'models/gemini-1.5-flash'
-    elif 'models/gemini-1.5-pro' in models:
-        active_model = 'models/gemini-1.5-pro'
-    else:
-        active_model = models[0]
+    active_model = 'models/gemini-1.5-flash' if 'models/gemini-1.5-flash' in models else models[0]
     st.sidebar.success(f"✅ AI Pronta: {active_model}")
 except Exception as e:
-    st.sidebar.error(f"❌ Errore connessione AI: {e}")
+    st.sidebar.error(f"❌ Errore AI: {e}")
     st.stop()
 
 FMT = {
@@ -71,7 +69,6 @@ if files and st.button("✨ GENERA VIDEO"):
             with st.status(f"Elaborazione {f.name}...") as stt:
                 stt.write("🛰️ Upload...")
                 v_ai = genai.upload_file(path=p)
-                
                 while True:
                     inf = genai.get_file(v_ai.name)
                     if inf.state.name == "ACTIVE": break
@@ -80,14 +77,8 @@ if files and st.button("✨ GENERA VIDEO"):
                 stt.write("🧠 Analisi AI...")
                 time.sleep(10) 
                 
-                # Usiamo il modello rilevato automaticamente
                 model = genai.GenerativeModel(active_model)
-                
-                prompt = f"""
-                Expert Social Media for {cat}. Find viral clip (7-12s). 
-                JSON response: {{"start": float, "end": float, "caption": "string", "music": ["s1","s2","s3"]}}
-                """
-                
+                prompt = f"Expert Social Media for {cat}. Find viral clip (7-12s). JSON: 'start' (float), 'end' (float), 'caption' (str), 'music' (list)"
                 resp = model.generate_content([v_ai, prompt], generation_config={"response_mime_type": "application/json"})
                 data = json.loads(resp.text)
                 
@@ -100,11 +91,10 @@ if files and st.button("✨ GENERA VIDEO"):
                     with c1: st.video(out)
                     with c2:
                         st.info(f"**Caption:**\n{data['caption']}")
-                        st.warning("**🎵 Audio Trend:**\n" + "\n".join([f"- {m}" for m in data['music']]))
+                        st.warning("**🎵 Audio Trend:**\n" + "\n".join([f"- {m}" for m in data.get('music', [])]))
                         with open(out, "rb") as o_f:
                             st.download_button(f"Scarica {f.name}", o_f, file_name=f"viral_{f.name}")
                 stt.update(label="Fatto!", state="complete")
-                
         except Exception as err:
             st.error(f"Errore: {err}")
         finally:

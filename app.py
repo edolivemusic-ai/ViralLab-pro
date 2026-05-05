@@ -26,7 +26,7 @@ st.title("🎙️ Music Viral Lab: All-in-One Social Optimizer")
 # --- SICUREZZA API ---
 api_key = st.secrets.get("GEMINI_API_KEY") or st.sidebar.text_input("Inserisci Gemini API Key", type="password")
 if not api_key:
-    st.warning("⚠️ Inserisci la tua API Key nei Secrets per sbloccare l'AI.")
+    st.warning("⚠️ Inserisci la tua API Key nei Secrets di Streamlit per sbloccare l'AI.")
     st.stop()
 
 genai.configure(api_key=api_key)
@@ -34,7 +34,7 @@ genai.configure(api_key=api_key)
 # --- MAPPA FORMATI E RISOLUZIONI ---
 FORMAT_CONFIG = {
     "TikTok": {"Reels": (1080, 1920), "Storie": (1080, 1920), "Post": (1080, 1920)},
-    "Instagram": {"Reels": (1080, 1920), "Storie": (1080, 1920), "Post": (1080, 1350)},
+    "Instagram": {"Reels": (1080, 1920), "Storie": (1080, 1920), "Post": (1080, 1350)}, 
     "Facebook": {"Reels": (1080, 1920), "Storie": (1080, 1920), "Post": (1080, 1080)}
 }
 
@@ -43,7 +43,7 @@ def process_video_advanced(input_path, platform, content_type):
     clip = mp.VideoFileClip(input_path)
     target_w, target_h = FORMAT_CONFIG[platform][content_type]
     
-    # Ridimensionamento intelligente
+    # Ridimensionamento intelligente (Auto-Crop)
     clip_resized = clip.resize(height=target_h)
     if clip_resized.w > target_w:
         clip_final = clip_resized.crop(x_center=clip_resized.w/2, width=target_w)
@@ -63,12 +63,11 @@ with col_sidebar:
     ])
     
     platform = st.selectbox("Piattaforma", ["Instagram", "TikTok", "Facebook"])
-    
     content_type = st.radio("Tipo di Contenuto", ["Reels", "Storie", "Post"])
     
     st.divider()
     
-    uploaded_files = st.file_uploader("📤 Trascina qui i video (anche multipli)", 
+    uploaded_files = st.file_uploader("📤 trascina qui i video (anche multipli)", 
                                      type=["mp4", "mov"], 
                                      accept_multiple_files=True)
 
@@ -78,78 +77,76 @@ if uploaded_files and st.button("✨ GENERA CONTENUTI VIRALI"):
     for uploaded_file in uploaded_files:
         with st.status(f"Elaborando {uploaded_file.name}...") as status:
             
-            # Salva temporaneamente
+            # 1. Salva temporaneamente
             with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tfile:
                 tfile.write(uploaded_file.read())
                 path = tfile.name
 
-            # AI AGENT SPECIALIZZATO
+            # 2. Caricamento su Google AI
             model = genai.GenerativeModel('gemini-1.5-flash')
             video_ai = genai.upload_file(path=path)
             
-            # Attesa elaborazione video su Google Cloud per evitare l'errore "NotFound"
-            status.update(label="Google sta analizzando la musica e i fotogrammi...", state="running")
+            # 3. ATTESA ELABORAZIONE GOOGLE (Risolve errore NotFound)
+            status.update(label="L'AI sta analizzando la musica e i movimenti...", state="running")
             while video_ai.state.name == "PROCESSING":
                 time.sleep(2)
                 video_ai = genai.get_file(video_ai.name)
             
             if video_ai.state.name == "FAILED":
-                st.error(f"Errore caricamento per {uploaded_file.name}")
+                st.error(f"Errore Google AI sul video {uploaded_file.name}")
                 continue
 
-            # Prompt Dinamico basato su Piattaforma e Formato
+            # 4. Prompt Strategico
             prompt = f"""
-            Sei un esperto Viral Strategist per {category}.
-            Ottimizza questo contenuto per {platform} ({content_type}).
+            Sei un esperto Social Media Manager per {category}.
+            Ottimizza questo video per {platform} ({content_type}).
+            Analizza il ritmo e le emozioni (es. drop del dj, acuti del cantante, balli degli sposi).
+            Identifica il momento più virale tra i 7 e i 12 secondi.
             
-            Skills specifiche da applicare:
-            - Se TikTok: focus su ritmi veloci, hook nei primi 2 secondi e 'chaos energy'.
-            - Se Instagram Reels: focus su estetica, transizioni fluide e lifestyle aspirazionale.
-            - Se Facebook: focus su interazione (domande nella caption) e condivisione familiare/emozionale.
-            - Se Storie: stile più grezzo e 'dietro le quinte'.
-
-            Analizza i competitor del settore ed identifica il picco emotivo o musicale.
-            Restituisci JSON puro:
+            Restituisci SOLO un JSON:
             {{
               "start": secondo d'inizio,
-              "end": secondo di fine (max 12s),
+              "end": secondo di fine,
               "hook_text": "titolo gancio",
-              "caption": "caption ottimizzata per {platform}",
-              "hashtags": "tag virali",
-              "viral_reason": "perché questo taglio funzionerà su {platform}"
+              "caption": "caption virale con emoji per {platform}",
+              "hashtags": "hashtag strategici",
+              "viral_reason": "perché questo taglio funzionerà"
             }}
             """
             
             response = model.generate_content([video_ai, prompt])
             
             try:
-                # Estrazione dati
-                raw_text = re.search(r'\{.*\}', response.text, re.DOTALL).group()
-                data = json.loads(raw_text)
+                # Estrazione JSON
+                data = json.loads(re.search(r'\{.*\}', response.text, re.DOTALL).group())
                 
-                # Editing Video Fisico
-                status.update(label=f"Montaggio {platform} {content_type} in corso...", state="running")
+                # 5. Montaggio Video Fisico
+                status.update(label=f"Ritagliando video per {platform}...", state="running")
                 edited_clip = process_video_advanced(path, platform, content_type)
-                final_video = edited_clip.subclip(float(data['start']), float(data['end']))
                 
-                out_path = f"viral_{platform}_{uploaded_file.name}"
+                # Controllo durata video
+                v_start = float(data['start'])
+                v_end = min(float(data['end']), edited_clip.duration)
+                
+                final_video = edited_clip.subclip(v_start, v_end)
+                
+                out_path = f"viral_{uploaded_file.name}"
                 final_video.write_videofile(out_path, codec="libx264", audio_codec="aac", fps=30, logger=None)
                 
-                # Visualizzazione nel Lab
+                # Visualizzazione
                 with col_main:
-                    with st.expander(f"🎬 {uploaded_file.name} - PRONTO PER {platform.upper()}", expanded=True):
+                    with st.expander(f"🎬 {uploaded_file.name} PRONTO", expanded=True):
                         v_col, t_col = st.columns([1, 1.2])
                         with v_col:
                             st.video(out_path)
                             with open(out_path, "rb") as f:
-                                st.download_button(f"📥 SCARICA PER {platform.upper()}", f, file_name=out_path)
+                                st.download_button(f"📥 SCARICA", f, file_name=f"{platform}_{uploaded_file.name}")
                         with t_col:
-                            st.markdown(f"**🎯 Strategia Competitor:** {data['viral_reason']}")
-                            st.markdown(f"**🪝 Hook consigliato:** `{data['hook_text']}`")
+                            st.markdown(f"**🎯 Strategia:** {data['viral_reason']}")
+                            st.markdown(f"**🪝 Hook:** `{data['hook_text']}`")
                             st.code(f"{data['caption']}\n\n{data['hashtags']}", language="text")
                 
             except Exception as e:
-                st.error(f"Errore nel processing del video {uploaded_file.name}: {e}")
+                st.error(f"Errore durante il montaggio di {uploaded_file.name}: {e}")
             finally:
-                if os.path.exists(path): 
-                    os.remove(path)
+                if os.path.exists(path): os.remove(path)

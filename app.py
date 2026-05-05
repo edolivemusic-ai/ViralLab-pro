@@ -26,37 +26,41 @@ st.title("🎙️ Music Viral Lab: All-in-One")
 # --- API KEY ---
 api_key = st.secrets.get("GEMINI_API_KEY")
 if not api_key:
-    st.error("⚠️ Configura GEMINI_API_KEY nei Secrets di Streamlit.")
+    st.error("⚠️ Configura GEMINI_API_KEY nei Secrets.")
     st.stop()
 
 genai.configure(api_key=api_key)
 
-# --- CONFIGURAZIONE FORMATI ---
 FORMAT_MAP = {
     "Instagram": {"Reels": (1080, 1920), "Storie": (1080, 1920), "Post": (1080, 1350)},
     "TikTok": {"Reels": (1080, 1920), "Storie": (1080, 1920), "Post": (1080, 1920)},
     "Facebook": {"Reels": (1080, 1920), "Storie": (1080, 1920), "Post": (1080, 1080)}
 }
 
-# --- FUNZIONE DI MONTAGGIO ---
+# --- FUNZIONE DI MONTAGGIO (OTTIMIZZATA RAM) ---
 def auto_edit_video(input_path, platform, content_type, start_sec, end_sec):
-    video = mp.VideoFileClip(input_path)
-    target_w, target_h = FORMAT_MAP[platform][content_type]
-    
-    # Taglio
-    video_cut = video.subclip(max(0, float(start_sec)), min(float(end_sec), video.duration))
-    
-    # Resize e Crop
-    video_rescaled = video_cut.resize(height=target_h)
-    if video_rescaled.w > target_w:
-        video_final = video_rescaled.crop(x_center=video_rescaled.w/2, width=target_w)
-    else:
-        video_final = video_rescaled
+    with mp.VideoFileClip(input_path) as video:
+        target_w, target_h = FORMAT_MAP[platform][content_type]
         
-    out_path = f"viral_export_{int(time.time())}.mp4"
-    video_final.write_videofile(out_path, codec="libx264", audio_codec="aac", fps=24, logger=None, preset='ultrafast')
-    video.close()
-    return out_path
+        # Taglio immediato per risparmiare memoria
+        start = max(0, float(start_sec))
+        end = min(float(end_sec), video.duration)
+        if end <= start: end = start + 10
+        
+        clip = video.subclip(start, end)
+        
+        # Resize e Crop
+        clip_res = clip.resize(height=target_h)
+        if clip_res.w > target_w:
+            final = clip_res.crop(x_center=clip_res.w/2, width=target_w)
+        else:
+            final = clip_res
+            
+        out_path = f"final_{int(time.time())}.mp4"
+        # Parametri critici per non far crashare il server
+        final.write_videofile(out_path, codec="libx264", audio_codec="aac", fps=24, 
+                              logger=None, preset='ultrafast', threads=1)
+        return out_path
 
 # --- INTERFACCIA ---
 with st.sidebar:
@@ -66,61 +70,49 @@ with st.sidebar:
     ctype = st.radio("Formato", ["Reels", "Storie", "Post"])
     files = st.file_uploader("📤 Carica Video", type=["mp4", "mov"], accept_multiple_files=True)
 
-# --- LOGICA DI ELABORAZIONE ---
+# Contenitore per i risultati (fuori dai loop di stato)
+result_container = st.container()
+
+# --- LOGICA ---
 if files and st.button("✨ GENERA VIDEO AUTOMATICI"):
     for f in files:
-        with st.status(f"Lavorando su: {f.name}") as status:
-            t = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
-            t.write(f.read())
-            p = t.name
-
-            try:
-                # 1. Caricamento su Google
+        # 1. Salvataggio locale
+        t = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+        t.write(f.read())
+        p = t.name
+        
+        video_ai = None
+        
+        try:
+            with st.status(f"🛠️ Elaborazione: {f.name}") as status:
+                # 2. Caricamento Google
                 status.update(label="Caricamento su Google AI...")
                 video_ai = genai.upload_file(path=p)
                 
-                # 2. Attesa attiva (Polling)
+                # 3. Attesa (molto più lunga per sicurezza)
                 while True:
                     file_info = genai.get_file(video_ai.name)
                     if file_info.state.name == "ACTIVE":
                         break
-                    if file_info.state.name == "FAILED":
-                        raise Exception("L'elaborazione del video su Google è fallita.")
-                    status.update(label=f"Google sta analizzando il video ({file_info.state.name})...")
-                    time.sleep(4)
+                    status.update(label=f"Google sta indicizzando il video ({file_info.state.name})...")
+                    time.sleep(5)
                 
-                # 3. ANALISI CON RETRY (Risolve l'errore NotFound)
-                status.update(label="L'AI sta montando il video (momento clou)...")
+                # Pausa extra: il NotFound capita se chiediamo subito dopo "ACTIVE"
+                time.sleep(10) 
+                
+                # 4. Analisi AI con retry
                 model = genai.GenerativeModel('gemini-1.5-flash')
-                prompt = f"Sei un esperto di {cat}. Analizza il video per {plat} {ctype}. Trova il momento migliore tra 7 e 12 secondi. Restituisci SOLO JSON: {{'start': secondi, 'end': secondi, 'hook': 'testo', 'caption': 'testo'}}"
+                prompt = f"Sei un esperto di {cat}. Analizza il video per {plat} {ctype}. Trova il momento clou (7-12 sec). Rispondi SOLO JSON: {{'start': sec, 'end': sec, 'hook': 'testo', 'caption': 'testo'}}"
                 
-                response = None
-                for attempt in range(3): # Riprova 3 volte se dà NotFound
+                response_text = ""
+                for attempt in range(4):
                     try:
-                        time.sleep(3) # Pausa di sicurezza
-                        response = model.generate_content([video_ai, prompt])
-                        if response: break
+                        resp = model.generate_content([video_ai, prompt])
+                        response_text = resp.text
+                        break
                     except exceptions.NotFound:
-                        if attempt < 2:
-                            status.update(label=f"Sincronizzazione API in corso (Tentativo {attempt+1})...")
-                            time.sleep(5)
-                        else: raise
-
-                # 4. Parsing e Montaggio
-                res = json.loads(re.search(r'\{.*\}', response.text, re.DOTALL).group())
-                status.update(label="Taglio e Formattazione video in corso...")
-                output = auto_edit_video(p, plat, ctype, res['start'], res['end'])
+                        status.update(label=f"Sincronizzazione in corso (Tentativo {attempt+1})...")
+                        time.sleep(8)
                 
-                # 5. Risultato
-                st.video(output)
-                st.success(f"Video {f.name} completato!")
-                st.code(res['caption'])
-                with open(output, "rb") as file_ready:
-                    st.download_button(f"📥 Scarica {f.name}", file_ready, file_name=f"viral_{f.name}")
-                
-            except Exception as e:
-                st.error(f"Errore su {f.name}: {e}")
-            finally:
-                if os.path.exists(p): os.remove(p)
-                try: genai.delete_file(video_ai.name)
-                except: pass
+                # 5. Montaggio
+                status.update(label="AI ha deciso i tempi. Montagg

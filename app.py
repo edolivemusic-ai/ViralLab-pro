@@ -4,9 +4,12 @@ import moviepy.editor as mp
 import tempfile, os, json, time
 import PIL.Image
 
-# --- PATCH PER COMPATIBILITÀ MOVIEPY ---
+# --- PATCH FONDAMENTALE PER PYTHON 3.14 ---
 if not hasattr(PIL.Image, 'ANTIALIAS'):
     PIL.Image.ANTIALIAS = PIL.Image.LANCZOS
+# ------------------------------------------
+
+# ... resto del codice ...
 
 # --- CONFIGURAZIONE ---
 st.set_page_config(page_title="Music Viral Lab Pro", layout="wide")

@@ -14,7 +14,7 @@ if not api_key:
     st.error("Inserisci la API KEY nei Secrets.")
     st.stop()
 
-# Configurazione API stabile
+# Inizializzazione API
 genai.configure(api_key=api_key)
 
 FMT = {
@@ -28,7 +28,7 @@ def auto_edit(path, plat, ctype, start, end):
         with mp.VideoFileClip(path) as video:
             tw, th = FMT[plat][ctype]
             s, e = max(0, float(start)), min(float(end), video.duration)
-            if (e - s) < 2: e = s + 10 # Durata minima 10s se l'AI sbaglia
+            if (e - s) < 2: e = s + 10
             
             clip = video.subclip(s, e).resize(height=th)
             final = clip.crop(x_center=clip.w/2, width=tw) if clip.w > tw else clip
@@ -54,38 +54,45 @@ if files and st.button("✨ GENERA VIDEO"):
         v_ai = None
         
         try:
-            with st.status(f"Processando {f.name}...") as stt:
-                stt.write("🛰️ Upload su Google AI...")
+            with st.status(f"Elaborazione {f.name}...") as stt:
+                stt.write("🛰️ Upload su Google...")
                 v_ai = genai.upload_file(path=p)
                 
-                # Attesa che il video sia pronto
                 while True:
                     inf = genai.get_file(v_ai.name)
                     if inf.state.name == "ACTIVE": break
                     time.sleep(5)
                 
-                stt.write("🧠 L'AI sta analizzando il momento migliore...")
-                time.sleep(10) # Pausa di sicurezza per sincronizzazione API
+                stt.write("🧠 Analisi AI in corso...")
+                time.sleep(12) 
                 
-                # CHIAMATA AL MODELLO (Versione Standard)
-                model = genai.GenerativeModel('gemini-1.5-flash')
+                # --- CORREZIONE ERRORE 404 ---
+                # Usiamo il nome completo del modello per forzare il riconoscimento
+                model = genai.GenerativeModel('models/gemini-1.5-flash')
                 
                 prompt = f"""
                 Agisci come esperto Social Media per {cat}. Trova i 10 secondi più virali.
-                Rispondi RIGOROSAMENTE in formato JSON:
+                Rispondi in JSON:
                 {{
                   "start": float,
                   "end": float,
-                  "caption": "stringa con hashtag",
-                  "music_trends": ["canzone 1", "canzone 2", "canzone 3"]
+                  "caption": "testo virale",
+                  "music_trends": ["song1", "song2", "song3"]
                 }}
                 """
                 
-                # Forza la risposta JSON per evitare errori di lettura
-                resp = model.generate_content([v_ai, prompt], generation_config={"response_mime_type": "application/json"})
+                # Tentativo di chiamata
+                try:
+                    resp = model.generate_content([v_ai, prompt], generation_config={"response_mime_type": "application/json"})
+                except Exception as api_err:
+                    # Se fallisce ancora, proviamo il modello Pro come backup automatico
+                    stt.write("⚠️ Switch su modello Pro...")
+                    model = genai.GenerativeModel('models/gemini-1.5-pro')
+                    resp = model.generate_content([v_ai, prompt], generation_config={"response_mime_type": "application/json"})
+                
                 data = json.loads(resp.text)
                 
-                stt.write(f"✂️ Taglio e Formattazione {plat}...")
+                stt.write(f"✂️ Rendering {plat}...")
                 out = auto_edit(p, plat, ctype, data['start'], data['end'])
                 
                 if out:
@@ -94,13 +101,13 @@ if files and st.button("✨ GENERA VIDEO"):
                     with c1: st.video(out)
                     with c2:
                         st.info(f"**Caption:**\n{data['caption']}")
-                        st.warning("**🎵 Audio Trend Consigliati:**\n" + "\n".join([f"- {m}" for m in data['music_trends']]))
+                        st.warning("**🎵 Audio Trend:**\n" + "\n".join([f"- {m}" for m in data['music_trends']]))
                         with open(out, "rb") as o_f:
                             st.download_button(f"Scarica {f.name}", o_f, file_name=f"viral_{f.name}")
                 stt.update(label="Completato!", state="complete")
                 
         except Exception as err:
-            st.error(f"Errore: {err}")
+            st.error(f"Errore Critico: {err}")
         finally:
             if os.path.exists(p): os.remove(p)
             if v_ai:

@@ -1,3 +1,4 @@
 streamlit
 google-generativeai
-moviepy
+moviepy==1.0.3
+proglog

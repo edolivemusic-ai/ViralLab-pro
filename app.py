@@ -21,27 +21,28 @@ if not api_key:
 genai.configure(api_key=api_key)
 
 FMT = {
-    "Instagram": {"Reels": (720, 1280), "Post": (720, 900)},
-    "TikTok": {"Reels": (720, 1280), "Storie": (720, 1280)},
-    "Facebook": {"Post": (720, 720), "Reels": (720, 1280)}
+    "Instagram": {"Reels": (720, 1280), "Storie": (720, 1280), "Post": (720, 900)},
+    "TikTok": {"Reels": (720, 1280), "Storie": (720, 1280), "Post": (720, 1280)},
+    "Facebook": {"Post": (720, 720), "Reels": (720, 1280), "Storie": (720, 1280)}
 }
 
-# --- FUNZIONE MONTAGGIO RITMICO ---
+# --- FUNZIONE MONTAGGIO ---
 def build_sizzle(data_list, plat, ctype):
     tw, th = FMT[plat][ctype]
     clips = []
     for d in data_list:
         try:
-            with mp.VideoFileClip(d['path']) as v:
-                s, e = float(d['start']), float(d['end'])
-                # Taglio ritmico (max 2.5s per clip)
-                c = v.subclip(s, min(e, s + 2.5)).resize(height=th)
-                f = c.crop(x_center=c.w/2, width=tw) if c.w > tw else c
-                clips.append(f.copy())
+            v = mp.VideoFileClip(d['path'])
+            s, e = float(d['start']), float(d['end'])
+            # Taglio ritmico e resize
+            c = v.subclip(s, min(e, s + 2.5)).resize(height=th)
+            f = c.crop(x_center=c.w/2, width=tw) if c.w > tw else c
+            clips.append(f.copy())
+            v.close() # Libera RAM immediatamente
         except: continue
     if not clips: return None
     final = mp.concatenate_videoclips(clips, method="compose")
-    out = f"sizzle_{int(time.time())}.mp4"
+    out = f"final_puglia_{int(time.time())}.mp4"
     final.write_videofile(out, codec="libx264", audio_codec="aac", fps=24, logger=None, preset='ultrafast', threads=1)
     return out
 
@@ -50,35 +51,38 @@ with st.sidebar:
     st.header("📍 Bari/Puglia Setup")
     cat = st.selectbox("Categoria", ["DJ Set", "Musica dal Vivo", "Karaoke", "Wedding Music", "Wedding Band"])
     plat = st.selectbox("Piattaforma", ["Instagram", "TikTok", "Facebook"])
-    ctype = st.radio("Formato", ["Reels", "Post"])
+    ctype = st.radio("Formato", ["Reels", "Storie", "Post"]) # REINSERITA OPZIONE STORIE
     files = st.file_uploader("📤 Carica Video Grezzi", type=["mp4", "mov"], accept_multiple_files=True)
 
 # --- LOGICA ---
 if files:
     if st.button("🔎 1. ANALIZZA HIGHLIGHTS E MUSICA"):
         all_h = []
+        music_tip = "Cerca un trend ritmico su TikTok Italia."
         with st.status("🛸 AI sta visionando i file...") as stt:
+            model = genai.GenerativeModel('models/gemini-1.5-flash')
             for f in files:
                 t = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
                 t.write(f.read()); p = t.name
                 v_ai = genai.upload_file(path=p)
                 while genai.get_file(v_ai.name).state.name == "PROCESSING": time.sleep(4)
-                time.sleep(10)
-                model = genai.GenerativeModel('gemini-1.5-flash')
-                prompt = f"Expert editor in Bari, Italy. Find 3s highlight for {cat}. JSON: {{'start':float, 'end':float}}"
+                
+                time.sleep(10) # Pausa anti-404
+                prompt = f"Expert editor in Puglia. Find 3s highlight for {cat}. Also suggest 3 Italian music trends. JSON: {{'start':float, 'end':float, 'music':'string'}}"
                 try:
                     r = model.generate_content([v_ai, prompt], generation_config={"response_mime_type": "application/json"})
                     d = json.loads(r.text)
                     d['path'] = p; d['name'] = f.name; all_h.append(d)
+                    music_tip = d.get('music', music_tip) # Prende il consiglio musicale dall'analisi video
                 except: pass
+            
             st.session_state['h_list'] = all_h
-            m_p = f"Suggerisci 3 trend musicali Italia/Puglia per montaggio {cat} ritmico."
-            st.session_state['m_adv'] = model.generate_content(m_p).text
+            st.session_state['m_adv'] = music_tip
             stt.update(label="Analisi completata!", state="complete")
 
     if 'h_list' in st.session_state:
         st.success(f"Trovati {len(st.session_state['h_list'])} momenti top!")
-        st.warning(f"🎵 **CONSIGLI MUSICA ITALIA:**\n\n{st.session_state['m_adv']}")
+        st.warning(f"🎵 **CONSIGLI MUSICA (TREND ITALIA/PUGLIA):**\n\n{st.session_state['m_adv']}")
         
         if st.button("🎬 2. GENERA SUPER-MONTAGGIO FINALE"):
             with st.status("✂️ Montaggio ritmico in corso...") as stt:
@@ -86,5 +90,5 @@ if files:
                 if final_out:
                     st.video(final_out)
                     with open(final_out, "rb") as fr:
-                        st.download_button("📥 SCARICA REEL FINALE", fr, file_name="sizzle_puglia.mp4")
+                        st.download_button("📥 SCARICA VIDEO COMPLETO", fr, file_name="sizzle_puglia.mp4")
                 stt.update(label="Fatto!", state="complete")

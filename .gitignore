@@ -23,6 +23,12 @@ sizzle_*.mp4
 *.temp
 temp/
 
+# ====================== Credenziali & Variabili d'ambiente ======================
+.env
+*.env
+.env.local
+.env.production
+
 # ====================== Temporary & Log files ======================
 *.log
 tempfile_*

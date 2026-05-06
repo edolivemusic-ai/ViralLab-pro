@@ -7,3 +7,4 @@ imageio-ffmpeg>=0.5.1
 proglog
 google-auth
 decorator>=4.0.2,<5.0.0
+numpy>=1.24.0

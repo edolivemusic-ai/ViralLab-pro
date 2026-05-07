@@ -9,7 +9,6 @@ import time
 import concurrent.futures
 import PIL.Image
 import numpy as np
-import re
 
 # --- PATCH COMPATIBILITÀ PIL ---
 if not hasattr(PIL.Image, 'ANTIALIAS'):
@@ -30,7 +29,6 @@ st.markdown("""
         color: white; border: none; border-radius: 10px; height: 55px; width: 100%; font-weight: bold;
     }
     .stExpander { background-color: #1e2129; border-radius: 10px; }
-    .error-box { background-color: #441111; padding: 10px; border-radius: 5px; border-left: 5px solid red; margin-bottom: 10px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -42,12 +40,11 @@ if not api_key:
     st.error("❌ Manca GEMINI_API_KEY nei Secrets di Streamlit.")
     st.stop()
 
-# Configurazione Google AI
 genai.configure(api_key=api_key)
 
 # --- COSTANTI ---
 MAX_CLIPS = 10
-MODEL_ID = "gemini-1.5-flash"  # Modello ottimizzato per video e JSON
+MODEL_ID = "gemini-1.5-flash"
 
 FMT = {
     "Instagram": {"Reels": (720, 1280), "Storie": (720, 1280), "Post": (720, 900)},
@@ -56,11 +53,10 @@ FMT = {
 }
 
 # ─────────────────────────────────────────
-# FUNZIONI DI ANALISI E LOGICA
+# FUNZIONI UTILITY
 # ─────────────────────────────────────────
 
 def cleanup_temp_files(paths):
-    """Rimuove file temporanei in sicurezza."""
     for path in paths:
         try:
             if path and os.path.exists(path):
@@ -69,7 +65,6 @@ def cleanup_temp_files(paths):
             pass
 
 def get_audio_peak(video_path, start_hint=0.0):
-    """Trova il picco di volume vicino al suggerimento AI."""
     try:
         v = mp.VideoFileClip(video_path)
         if v.audio is None:
@@ -88,7 +83,6 @@ def get_audio_peak(video_path, start_hint=0.0):
             rms_values.append(rms)
         v.close()
 
-        # Cerca picco in finestra di 10 secondi
         window_start = max(0, start_hint - 5)
         window_end = min(duration, start_hint + 5)
         idx_start = int(window_start / step)
@@ -103,24 +97,19 @@ def get_audio_peak(video_path, start_hint=0.0):
         return start_hint
 
 def scan_single_video(f, cat):
-    """Analizza un video con Gemini 1.5 Flash."""
     p = ""
     v_ai = None
     try:
-        # 1. Salva localmente
         with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as t:
             t.write(f.getvalue())
             p = t.name
         
-        # 2. Carica su Google AI Studio
         v_ai = genai.upload_file(path=p)
         while genai.get_file(v_ai.name).state.name == "PROCESSING":
             time.sleep(2)
         
-        # 3. Richiesta AI
         model = genai.GenerativeModel(MODEL_ID)
-        prompt = (f"Analizza questo video di {cat}. Trova il picco energetico "
-                  "(es. un drop musicale, un brindisi o un momento emozionante). "
+        prompt = (f"Analizza questo video di {cat}. Trova il picco energetico. "
                   "Rispondi ESCLUSIVAMENTE con un oggetto JSON: "
                   "{\"start\": float, \"reason\": string}")
         
@@ -129,11 +118,8 @@ def scan_single_video(f, cat):
             generation_config={"response_mime_type": "application/json"}
         )
         
-        # 4. Parsing Risposta
         d = json.loads(r.text)
         ai_start = float(d.get('start', 0))
-        
-        # 5. Fine-tuning audio
         audio_peak = get_audio_peak(p, start_hint=ai_start)
         
         d.update({
@@ -153,7 +139,6 @@ def scan_single_video(f, cat):
             except: pass
 
 def render_sizzle(data_to_use, plat, ctype, clip_duration, audio_path):
-    """Genera il video finale montato."""
     try:
         tw, th = FMT[plat][ctype]
         clips = []
@@ -163,7 +148,6 @@ def render_sizzle(data_to_use, plat, ctype, clip_duration, audio_path):
             start = float(d['start'])
             end = min(start + float(clip_duration), v.duration)
             
-            # Subclip e adattamento formato
             clip = v.subclip(start, end).resize(height=th)
             if clip.w > tw:
                 clip = clip.crop(x_center=clip.w/2, width=tw)
@@ -174,14 +158,10 @@ def render_sizzle(data_to_use, plat, ctype, clip_duration, audio_path):
 
         final_video = mp.concatenate_videoclips(clips, method="compose")
         
-        # Mix audio background
         if audio_path and os.path.exists(audio_path):
             bg_audio = mp.AudioFileClip(audio_path).subclip(0, final_video.duration).audio_fadeout(2)
             if final_video.audio:
-                final_video.audio = mp.CompositeAudioClip([
-                    bg_audio.volumex(0.7), 
-                    final_video.audio.volumex(0.3)
-                ])
+                final_video.audio = mp.CompositeAudioClip([bg_audio.volumex(0.7), final_video.audio.volumex(0.3)])
             else:
                 final_video.audio = bg_audio
         
@@ -195,32 +175,65 @@ def render_sizzle(data_to_use, plat, ctype, clip_duration, audio_path):
         return None
 
 # ─────────────────────────────────────────
-# INTERFACCIA STREAMLIT
+# INTERFACCIA
 # ─────────────────────────────────────────
 
 with st.sidebar:
-    st.header("📍 Puglia Config")
-    cat = st.selectbox("Tipo Evento", ["DJ Set", "Live Music", "Wedding Puglia", "Karaoke"])
+    st.header("📍 Config")
+    cat = st.selectbox("Tipo", ["DJ Set", "Musica dal Vivo", "Wedding", "Karaoke"])
     plat = st.selectbox("Piattaforma", ["Instagram", "TikTok", "Facebook"])
     ctype = st.radio("Formato", ["Reels", "Storie", "Post"])
-    clip_duration = st.slider("Durata clip (sec)", 1.0, 5.0, 2.5)
-    st.divider()
-    audio_upload = st.file_uploader("Audio Soundtrack (MP3)", type=["mp3", "wav"])
-    st.divider()
-    files = st.file_uploader("📤 Carica Video (Max 10)", type=["mp4", "mov"], accept_multiple_files=True)
+    clip_duration = st.slider("Durata (s)", 1.0, 5.0, 2.5)
+    audio_upload = st.file_uploader("Audio Soundtrack", type=["mp3", "wav"])
+    files = st.file_uploader("Video (Max 10)", type=["mp4", "mov"], accept_multiple_files=True)
 
 if files:
-    # --- STEP 1: ANALISI ---
-    if st.button("🔎 1. ANALIZZA HIGHLIGHTS AI"):
+    if st.button("🔎 1. ANALIZZA VIDEO"):
         results = []
-        with st.status("🛸 AI sta analizzando i video (Gemini 1.5 Flash)...") as status:
-            # max_workers=2 per gestire la RAM limitata di Streamlit Cloud
+        with st.status("🛸 AI sta analizzando...") as status:
             with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
                 futures = [executor.submit(scan_single_video, f, cat) for f in files[:MAX_CLIPS]]
                 for future in concurrent.futures.as_completed(futures):
                     res = future.result()
                     results.append(res)
                     if 'error' in res:
-                        st.write(f"❌ **{res['name']}**: {res['error']}")
+                        st.write("❌ Errore su: " + res['name'])
                     else:
-                        st.write(f"✅ **{re
+                        st.write("✅ Pronto: " + res['name'])
+            status.update(label="Analisi completata!", state="complete")
+        st.session_state['h_list'] = results
+
+    if 'h_list' in st.session_state:
+        valid_h = [h for h in st.session_state['h_list'] if 'error' not in h]
+        
+        if valid_h:
+            with st.expander("✏️ Modifica Highlights", expanded=True):
+                for i, h in enumerate(valid_h):
+                    cols = st.columns([1, 2, 3])
+                    h['include'] = cols[0].checkbox("Usa", value=True, key=f"ch_{i}")
+                    h['start'] = cols[1].number_input("Inizio (s)", value=float(h['start']), key=f"st_{i}")
+                    cols[2].write("Motivo: " + h.get('reason', 'N/D'))
+            
+            if st.button("🎬 2. GENERA VIDEO FINALE"):
+                to_render = [h for h in valid_h if h['include']]
+                if to_render:
+                    a_path = None
+                    if audio_upload:
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as af:
+                            af.write(audio_upload.getvalue())
+                            a_path = af.name
+                    
+                    with st.spinner("Creazione video..."):
+                        final_path = render_sizzle(to_render, plat, ctype, clip_duration, a_path)
+                    
+                    if final_path:
+                        st.video(final_path)
+                        with open(final_path, "rb") as f:
+                            st.download_button("📥 Scarica", f, file_name="sizzle_puglia.mp4")
+                        if a_path: cleanup_temp_files([a_path])
+
+if st.sidebar.button("🧹 Reset"):
+    if 'h_list' in st.session_state:
+        cleanup_temp_files([h['path'] for h in st.session_state['h_list'] if 'path' in h])
+        del st.session_state['h_list']
+    st.rerun()

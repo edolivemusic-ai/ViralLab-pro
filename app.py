@@ -10,23 +10,38 @@ import concurrent.futures
 import PIL.Image
 import numpy as np
 
-# Patch ImageMagick
+# Patch per ImageMagick
 if os.path.exists("/usr/bin/convert"):
     change_settings({"IMAGEMAGICK_BINARY": "/usr/bin/convert"})
 
 st.set_page_config(page_title="Puglia Sizzle Lab Pro", layout="wide")
 
-# --- CONFIGURAZIONE API (FORZATA SU REST) ---
+# --- CONFIGURAZIONE API ---
 api_key = st.secrets.get("GEMINI_API_KEY")
 if not api_key:
     st.error("Manca GEMINI_API_KEY nei Secrets.")
     st.stop()
 
-# IL TRUCCO: Usiamo transport='rest' per evitare errori 404/connessione su Streamlit
+# Forziamo REST per stabilità su Streamlit Cloud
 genai.configure(api_key=api_key, transport='rest')
 
-# Modello specifico e stabile
-MODEL_ID = "gemini-1.5-flash-002" 
+# --- RILEVATORE DINAMICO DI MODELLI ---
+# Questa funzione interroga Google e trova il nome ESATTO che la tua chiave supporta
+@st.cache_resource
+def get_working_model():
+    try:
+        models = [m.name for m in genai.list_models() 
+                  if 'generateContent' in m.supported_generation_methods 
+                  and 'flash' in m.name.lower()]
+        if models:
+            return models[0] # Prende il primo modello Flash disponibile (es. models/gemini-1.5-flash)
+        return "models/gemini-1.5-flash" # Fallback estremo
+    except Exception as e:
+        st.warning(f"Errore scansione modelli: {e}")
+        return "models/gemini-1.5-flash"
+
+# Troviamo il modello una volta sola
+WORKING_MODEL = get_working_model()
 
 FMT = {
     "Instagram": {"Reels": (720, 1280), "Storie": (720, 1280), "Post": (720, 900)},
@@ -43,15 +58,15 @@ def get_audio_peak(video_path, start_hint=0.0):
         v = mp.VideoFileClip(video_path)
         if not v.audio: return start_hint
         step = 0.5
-        timestamps = np.arange(0, max(0, v.duration - step), step)
-        rms = [np.sqrt(np.mean(v.audio.subclip(t, min(t + step, v.duration)).to_soundarray(fps=22050)**2)) for t in timestamps]
+        ts = np.arange(0, max(0, v.duration - step), step)
+        rms = [np.sqrt(np.mean(v.audio.subclip(t, min(t + step, v.duration)).to_soundarray(fps=22050)**2)) for t in ts]
         v.close()
         idx_s = int(max(0, start_hint - 5) / step)
         idx_e = int(min(len(rms), (start_hint + 5) / step))
-        return float(timestamps[idx_s + np.argmax(rms[idx_s:idx_e])])
+        return float(ts[idx_s + np.argmax(rms[idx_s:idx_e])])
     except: return start_hint
 
-def scan_single_video(f, cat):
+def scan_single_video(f, cat, model_name):
     p = ""
     v_ai = None
     try:
@@ -59,14 +74,12 @@ def scan_single_video(f, cat):
             t.write(f.getvalue())
             p = t.name
         
-        # Caricamento file
         v_ai = genai.upload_file(path=p)
         while genai.get_file(v_ai.name).state.name == "PROCESSING":
             time.sleep(2)
         
-        # Analisi
-        model = genai.GenerativeModel(MODEL_ID)
-        prompt = f"Analizza questo video di {cat}. Trova il picco energetico. Rispondi SOLO JSON: {{\"start\": float, \"reason\": string}}"
+        model = genai.GenerativeModel(model_name)
+        prompt = f"Analizza video {cat}. Trova picco energetico. Rispondi SOLO JSON: {{\"start\": float, \"reason\": string}}"
         
         r = model.generate_content([v_ai, prompt], generation_config={"response_mime_type": "application/json"})
         d = json.loads(r.text)
@@ -107,11 +120,11 @@ def render_sizzle(data, plat, ctype, dur, audio_p):
 # ─────────────────────────────────────────
 
 st.title("🎬 Puglia Sizzle Lab ☀️")
-st.success(f"📡 Connessione REST stabilita con `{MODEL_ID}`")
+st.info(f"📡 Modello rilevato e attivo: `{WORKING_MODEL}`")
 
 with st.sidebar:
     st.header("📍 Opzioni")
-    cat = st.selectbox("Evento", ["DJ Set", "Live Music", "Wedding Puglia", "Karaoke"])
+    cat = st.selectbox("Evento", ["DJ Set", "Wedding Puglia", "Live Music"])
     plat = st.selectbox("Social", ["Instagram", "TikTok", "Facebook"])
     ctype = st.radio("Formato", ["Reels", "Storie", "Post"])
     dur = st.slider("Durata clip (s)", 1.0, 5.0, 2.5)
@@ -123,8 +136,8 @@ if files:
         results = []
         with st.status("Analisi AI...") as status:
             with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-                # Eseguiamo la scansione
-                futures = [executor.submit(scan_single_video, f, cat) for f in files[:10]]
+                # Passiamo il nome del modello rilevato dinamicamente
+                futures = [executor.submit(scan_single_video, f, cat, WORKING_MODEL) for f in files[:10]]
                 for future in concurrent.futures.as_completed(futures):
                     res = future.result()
                     results.append(res)
@@ -153,7 +166,7 @@ if files:
                 
                 if fp:
                     st.video(fp)
-                    st.download_button("📥 Scarica Video", open(fp, "rb"), file_name="puglia_sizzle.mp4")
+                    st.download_button("📥 Scarica Video", open(fp, "rb"), file_name="sizzle.mp4")
 
 if st.sidebar.button("🧹 Reset"):
     st.session_state.clear(); st.rerun()

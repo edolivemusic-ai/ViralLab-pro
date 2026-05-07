@@ -1,4 +1,13 @@
 import streamlit as st
+import PIL.Image
+
+# --- SUPER-PATCH PILLOW (DEVE ESSERE IN CIMA) ---
+# Questo risolve l'errore 'ANTIALIAS' sulle nuove versioni di Python
+if not hasattr(PIL.Image, 'ANTIALIAS'):
+    PIL.Image.ANTIALIAS = PIL.Image.LANCZOS
+if not hasattr(PIL.Image, 'Resampling'):
+    PIL.Image.Resampling = PIL.Image
+
 import google.generativeai as genai
 import moviepy.editor as mp
 from moviepy.config import change_settings
@@ -7,42 +16,37 @@ import os
 import json
 import time
 import concurrent.futures
-import PIL.Image
 import numpy as np
 
-# Patch per ImageMagick
+# Configurazione ImageMagick per Streamlit Cloud
 if os.path.exists("/usr/bin/convert"):
     change_settings({"IMAGEMAGICK_BINARY": "/usr/bin/convert"})
 
-st.set_page_config(page_title="Puglia Sizzle Lab Pro", layout="wide")
+st.set_page_config(page_title="Puglia Sizzle Lab Pro", layout="wide", page_icon="🎬")
 
-# --- CONFIGURAZIONE API ---
+# --- API KEY ---
 api_key = st.secrets.get("GEMINI_API_KEY")
 if not api_key:
     st.error("Manca GEMINI_API_KEY nei Secrets.")
     st.stop()
 
-# Forziamo REST per stabilità su Streamlit Cloud
+# Manteniamo transport='rest' perché ha risolto il tuo errore 404
 genai.configure(api_key=api_key, transport='rest')
 
-# --- RILEVATORE DINAMICO DI MODELLI ---
-# Questa funzione interroga Google e trova il nome ESATTO che la tua chiave supporta
+# --- RILEVATORE MODELLO ---
 @st.cache_resource
 def get_working_model():
     try:
         models = [m.name for m in genai.list_models() 
                   if 'generateContent' in m.supported_generation_methods 
                   and 'flash' in m.name.lower()]
-        if models:
-            return models[0] # Prende il primo modello Flash disponibile (es. models/gemini-1.5-flash)
-        return "models/gemini-1.5-flash" # Fallback estremo
-    except Exception as e:
-        st.warning(f"Errore scansione modelli: {e}")
+        return models[0] if models else "models/gemini-1.5-flash"
+    except:
         return "models/gemini-1.5-flash"
 
-# Troviamo il modello una volta sola
 WORKING_MODEL = get_working_model()
 
+# --- FORMATI VIDEO (Instagram, TikTok, Facebook) ---
 FMT = {
     "Instagram": {"Reels": (720, 1280), "Storie": (720, 1280), "Post": (720, 900)},
     "TikTok":    {"Reels": (720, 1280), "Storie": (720, 1280), "Post": (720, 1280)},
@@ -53,20 +57,20 @@ FMT = {
 # FUNZIONI CORE
 # ─────────────────────────────────────────
 
-def get_audio_peak(video_path, start_hint=0.0):
+def get_audio_peak(p, hint):
     try:
-        v = mp.VideoFileClip(video_path)
-        if not v.audio: return start_hint
+        v = mp.VideoFileClip(p)
+        if not v.audio: return hint
         step = 0.5
         ts = np.arange(0, max(0, v.duration - step), step)
         rms = [np.sqrt(np.mean(v.audio.subclip(t, min(t + step, v.duration)).to_soundarray(fps=22050)**2)) for t in ts]
         v.close()
-        idx_s = int(max(0, start_hint - 5) / step)
-        idx_e = int(min(len(rms), (start_hint + 5) / step))
+        idx_s = int(max(0, hint - 5) / step)
+        idx_e = int(min(len(rms), (hint + 5) / step))
         return float(ts[idx_s + np.argmax(rms[idx_s:idx_e])])
-    except: return start_hint
+    except: return hint
 
-def scan_single_video(f, cat, model_name):
+def scan_single_video(f, cat, m_name):
     p = ""
     v_ai = None
     try:
@@ -78,7 +82,7 @@ def scan_single_video(f, cat, model_name):
         while genai.get_file(v_ai.name).state.name == "PROCESSING":
             time.sleep(2)
         
-        model = genai.GenerativeModel(model_name)
+        model = genai.GenerativeModel(m_name)
         prompt = f"Analizza video {cat}. Trova picco energetico. Rispondi SOLO JSON: {{\"start\": float, \"reason\": string}}"
         
         r = model.generate_content([v_ai, prompt], generation_config={"response_mime_type": "application/json"})
@@ -100,6 +104,7 @@ def render_sizzle(data, plat, ctype, dur, audio_p):
         clips = []
         for d in data:
             v = mp.VideoFileClip(d['path'])
+            # Il resize ora funzionerà grazie al patch in alto
             c = v.subclip(d['start'], min(d['start'] + dur, v.duration)).resize(height=th)
             if c.w > tw: c = c.crop(x_center=c.w/2, width=tw)
             clips.append(c.fadein(0.2).fadeout(0.2))
@@ -116,11 +121,11 @@ def render_sizzle(data, plat, ctype, dur, audio_p):
         st.error(f"Errore render: {e}"); return None
 
 # ─────────────────────────────────────────
-# UI
+# INTERFACCIA
 # ─────────────────────────────────────────
 
 st.title("🎬 Puglia Sizzle Lab ☀️")
-st.info(f"📡 Modello rilevato e attivo: `{WORKING_MODEL}`")
+st.caption(f"📡 AI Model: `{WORKING_MODEL}` | Connessione: `REST`")
 
 with st.sidebar:
     st.header("📍 Opzioni")
@@ -128,15 +133,14 @@ with st.sidebar:
     plat = st.selectbox("Social", ["Instagram", "TikTok", "Facebook"])
     ctype = st.radio("Formato", ["Reels", "Storie", "Post"])
     dur = st.slider("Durata clip (s)", 1.0, 5.0, 2.5)
-    audio_up = st.file_uploader("Audio (MP3)", type=["mp3"])
-    files = st.file_uploader("Video (Max 10)", type=["mp4"], accept_multiple_files=True)
+    audio_up = st.file_uploader("Audio Soundtrack (MP3)", type=["mp3"])
+    files = st.file_uploader("Carica Video", type=["mp4"], accept_multiple_files=True)
 
 if files:
     if st.button("🔎 1. SCANSIONA VIDEO"):
         results = []
         with st.status("Analisi AI...") as status:
             with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
-                # Passiamo il nome del modello rilevato dinamicamente
                 futures = [executor.submit(scan_single_video, f, cat, WORKING_MODEL) for f in files[:10]]
                 for future in concurrent.futures.as_completed(futures):
                     res = future.result()
@@ -157,16 +161,16 @@ if files:
 
             if st.button("🎬 2. GENERA MONTAGGIO"):
                 ap = None
-                if audio_up:
+                if audio_upload := audio_up:
                     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as af:
-                        af.write(audio_up.getvalue()); ap = af.name
+                        af.write(audio_upload.getvalue()); ap = af.name
                 
-                with st.spinner("Creazione video..."):
+                with st.spinner("Creazione video in corso..."):
                     fp = render_sizzle([h for h in valid if h['include']], plat, ctype, dur, ap)
                 
                 if fp:
                     st.video(fp)
-                    st.download_button("📥 Scarica Video", open(fp, "rb"), file_name="sizzle.mp4")
+                    st.download_button("📥 Scarica", open(fp, "rb"), file_name="sizzle_puglia.mp4")
 
 if st.sidebar.button("🧹 Reset"):
     st.session_state.clear(); st.rerun()

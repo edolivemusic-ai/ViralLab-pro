@@ -1,6 +1,7 @@
 import streamlit as st
 import google.generativeai as genai
 import moviepy.editor as mp
+from moviepy.config import change_settings
 import tempfile
 import os
 import json
@@ -8,6 +9,11 @@ import time
 import concurrent.futures
 import PIL.Image
 import numpy as np
+import re
+
+# --- CONFIGURAZIONE IMAGEMAGICK PER LINUX (Streamlit Cloud) ---
+if os.path.exists("/usr/bin/convert"):
+    change_settings({"IMAGEMAGICK_BINARY": "/usr/bin/convert"})
 
 # --- PATCH COMPATIBILITÀ PIL ---
 if not hasattr(PIL.Image, 'ANTIALIAS'):
@@ -24,7 +30,7 @@ st.markdown("""
         color: white; border: none; border-radius: 10px; height: 55px; width: 100%; font-weight: bold;
     }
     .stExpander { background-color: #1e2129; border-radius: 10px; }
-    .platform-warning { background-color: #2a1f0f; border-left: 4px solid #FF0050; padding: 10px; border-radius: 5px; }
+    .error-box { background-color: #441111; padding: 10px; border-radius: 5px; border-left: 5px solid red; margin-bottom: 10px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -40,14 +46,7 @@ genai.configure(api_key=api_key)
 
 # --- COSTANTI ---
 MAX_CLIPS = 10
-# Usiamo 1.5 Flash perché è il più veloce e supporta l'analisi video
 MODEL_ID = "gemini-1.5-flash" 
-
-PLATFORM_LIMITS = {
-    "Instagram": {"Reels": 90,  "Storie": 60,  "Post": 60},
-    "TikTok":    {"Reels": 180, "Storie": 60,  "Post": 180},
-    "Facebook":  {"Reels": 60,  "Storie": 20,  "Post": 240},
-}
 
 FMT = {
     "Instagram": {"Reels": (720, 1280), "Storie": (720, 1280), "Post": (720, 900)},
@@ -55,23 +54,57 @@ FMT = {
     "Facebook":  {"Post":  (720, 720),  "Reels":  (720, 1280), "Storie": (720, 1280)}
 }
 
-DEFAULT_PROMPT = (
-    "Sei un video editor professionista di Bari specializzato in contenuti virali Puglia. "
-    "Analizza questo video di {cat} e trova il momento di picco energetico "
-    "(drop, acuto, brindisi, emozione forte). "
-    "Rispondi SOLO con JSON valido: "
-    '{"start": float, "reason": "breve spiegazione", "music": "3 canzoni trend Italia"}'
-)
+# ─────────────────────────────────────────
+# FUNZIONI DI RENDERING (Spostate in alto per evitare errori)
+# ─────────────────────────────────────────
 
-# ─────────────────────────────────────────
-# FUNZIONI UTILITY
-# ─────────────────────────────────────────
+def render_sizzle(data_to_use, plat, ctype, clip_duration, audio_path):
+    try:
+        tw, th = FMT[plat][ctype]
+        clips = []
+        for d in data_to_use:
+            if not os.path.exists(d['path']): continue
+            v = mp.VideoFileClip(d['path'])
+            start = float(d['start'])
+            dur = float(clip_duration)
+            end = min(start + dur, v.duration)
+            
+            # Crop e Resize
+            clip = v.subclip(start, end).resize(height=th)
+            if clip.w > tw:
+                clip = clip.crop(x_center=clip.w/2, width=tw)
+            
+            clips.append(clip.fadein(0.2).fadeout(0.2))
+        
+        if not clips: return None
+
+        final_video = mp.concatenate_videoclips(clips, method="compose")
+        
+        if audio_path and os.path.exists(audio_path):
+            bg_audio = mp.AudioFileClip(audio_path).subclip(0, final_video.duration).audio_fadeout(2)
+            if final_video.audio:
+                final_video.audio = mp.CompositeAudioClip([bg_audio.volumex(0.7), final_video.audio.volumex(0.3)])
+            else:
+                final_video.audio = bg_audio
+        
+        out_name = f"final_{int(time.time())}.mp4"
+        final_video.write_videofile(out_name, codec="libx264", audio_codec="aac", fps=24, preset="ultrafast", logger=None)
+        
+        for c in clips: c.close()
+        return out_name
+    except Exception as e:
+        st.error(f"Errore rendering: {e}")
+        return None
+
+def clean_json_response(text):
+    text = text.replace("```json", "").replace("```", "").strip()
+    match = re.search(r'\{.*\}', text, re.DOTALL)
+    return match.group(0) if match else text
 
 def cleanup_temp_files(paths):
     for path in paths:
         try:
-            if path and os.path.exists(path):
-                os.unlink(path)
+            if path and os.path.exists(path): os.unlink(path)
         except: pass
 
 def get_audio_peak(video_path, start_hint=0.0):
@@ -93,8 +126,8 @@ def get_audio_peak(video_path, start_hint=0.0):
             rms_values.append(rms)
         v.close()
 
-        window_start = max(0, start_hint - 10)
-        window_end = min(duration, start_hint + 10)
+        window_start = max(0, start_hint - 5)
+        window_end = min(duration, start_hint + 5)
         idx_start = int(window_start / step)
         idx_end = int(window_end / step)
 
@@ -105,7 +138,7 @@ def get_audio_peak(video_path, start_hint=0.0):
         return start_hint
     except: return start_hint
 
-def scan_single_video(f, prompt_template, cat):
+def scan_single_video(f, cat):
     p = ""
     v_ai = None
     try:
@@ -115,13 +148,15 @@ def scan_single_video(f, prompt_template, cat):
         
         v_ai = genai.upload_file(path=p)
         while genai.get_file(v_ai.name).state.name == "PROCESSING":
-            time.sleep(3)
+            time.sleep(2)
         
         model = genai.GenerativeModel(MODEL_ID)
-        prompt = prompt_template.replace("{cat}", cat)
-        r = model.generate_content([v_ai, prompt], generation_config={"response_mime_type": "application/json"})
+        prompt = (f"Sei un video editor Puglia. Trova il picco energetico in questo video di {cat}. "
+                  "Rispondi solo JSON: {\"start\": float, \"reason\": string}")
         
-        d = json.loads(r.text)
+        r = model.generate_content([v_ai, prompt])
+        d = json.loads(clean_json_response(r.text))
+        
         ai_start = float(d.get('start', 0))
         audio_peak = get_audio_peak(p, start_hint=ai_start)
         
@@ -135,126 +170,63 @@ def scan_single_video(f, prompt_template, cat):
             try: genai.delete_file(v_ai.name)
             except: pass
 
-def render_sizzle(data_to_use, plat, ctype, clip_duration, add_watermark, watermark_text, audio_path):
-    tw, th = FMT[plat][ctype]
-    clips = []
-    progress_bar = st.progress(0)
-
-    for i, d in enumerate(data_to_use):
-        try:
-            v = mp.VideoFileClip(d['path'])
-            start_time = float(d.get('start', 0))
-            dur = float(d.get('clip_duration_override', clip_duration))
-            end_time = min(start_time + dur, v.duration)
-
-            clip = v.subclip(start_time, end_time).resize(height=th)
-            final_clip = clip.crop(x_center=clip.w / 2, width=tw) if clip.w > tw else clip
-            final_clip = final_clip.fadein(0.1).fadeout(0.1)
-
-            if add_watermark and watermark_text.strip():
-                try:
-                    txt = mp.TextClip(watermark_text, fontsize=30, color='white', font='Arial-Bold', method='caption')
-                    txt = txt.set_duration(final_clip.duration).set_position(('center', 'bottom')).margin(bottom=20, opacity=0)
-                    final_clip = mp.CompositeVideoClip([final_clip, txt])
-                except: pass
-
-            clips.append(final_clip)
-            # Non chiudiamo v qui perché serve per il concatenamento
-        except Exception as err:
-            st.warning(f"Errore clip {d['name']}: {err}")
-        progress_bar.progress((i + 1) / len(data_to_use))
-
-    if not clips: return None
-
-    sizzle = mp.concatenate_videoclips(clips, method="compose")
-    
-    if audio_path and os.path.exists(audio_path):
-        try:
-            bg_audio = mp.AudioFileClip(audio_path).subclip(0, sizzle.duration).audio_fadeout(2)
-            if sizzle.audio:
-                sizzle = sizzle.set_audio(mp.CompositeAudioClip([bg_audio.volumex(0.8), sizzle.audio.volumex(0.3)]))
-            else:
-                sizzle = sizzle.set_audio(bg_audio)
-        except: pass
-
-    out = f"sizzle_{int(time.time())}.mp4"
-    sizzle.write_videofile(out, codec="libx264", audio_codec="aac", fps=24, preset='ultrafast', logger=None)
-    
-    # Pulizia clip
-    for c in clips: c.close()
-    sizzle.close()
-    return out
-
 # ─────────────────────────────────────────
-# SIDEBAR
+# INTERFACCIA PRINCIPALE
 # ─────────────────────────────────────────
+
 with st.sidebar:
     st.header("📍 Configurazione")
-    cat = st.selectbox("Tipo Contenuto", ["DJ Set", "Musica dal Vivo", "Wedding Puglia", "Karaoke"])
+    cat = st.selectbox("Tipo", ["DJ Set", "Musica dal Vivo", "Wedding Puglia", "Karaoke"])
     plat = st.selectbox("Piattaforma", ["Instagram", "TikTok", "Facebook"])
     ctype = st.radio("Formato", ["Reels", "Storie", "Post"])
-    
     clip_duration = st.slider("Durata clip (s)", 1.0, 5.0, 2.5)
-    
     st.divider()
-    add_watermark = st.toggle("Watermark")
-    watermark_text = st.text_input("Testo", "#PugliaSizzle") if add_watermark else ""
-    
-    audio_upload = st.file_uploader("Audio Background", type=["mp3", "wav"])
-    
-    custom_prompt = st.text_area("AI Prompt", value=DEFAULT_PROMPT)
-    
+    audio_upload = st.file_uploader("Audio Background (opzionale)", type=["mp3", "wav"])
     files = st.file_uploader("Video (Max 10)", type=["mp4", "mov"], accept_multiple_files=True)
 
-# ─────────────────────────────────────────
-# LOGICA
-# ─────────────────────────────────────────
 if files:
+    # 1. ANALISI
     if st.button("🔎 1. ANALIZZA VIDEO (GEMINI 1.5)"):
         results = []
-        with st.status("Analizzando i video...") as status:
-            with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
-                futures = [executor.submit(scan_single_video, f, custom_prompt, cat) for f in files[:MAX_CLIPS]]
+        with st.status("🛸 AI sta analizzando i video...") as status:
+            # Ridotto workers a 2 per non saturare la RAM di Streamlit Cloud
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+                futures = [executor.submit(scan_single_video, f, cat) for f in files[:MAX_CLIPS]]
                 for future in concurrent.futures.as_completed(futures):
                     res = future.result()
                     results.append(res)
-                    if 'error' in res: st.error(f"Errore {res['name']}: {res['error']}")
-                    else: st.write(f"✅ {res['name']} pronto.")
+                    if 'error' in res: st.write(f"❌ **{res['name']}**: {res['error']}")
+                    else: st.write(f"✅ **{res['name']}** analizzato.")
+            status.update(label="Analisi completata!", state="complete")
         st.session_state['h_list'] = results
 
+    # 2. MODIFICA E RENDERING
     if 'h_list' in st.session_state:
-        h_list = st.session_state['h_list']
-        valid_h = [h for h in h_list if 'error' not in h]
+        valid_h = [h for h in st.session_state['h_list'] if 'error' not in h]
         
-        with st.expander("✏️ Modifica Highlights", expanded=True):
-            for i, h in enumerate(valid_h):
-                cols = st.columns([1, 2, 2])
-                h['include'] = cols[0].checkbox("OK", value=True, key=f"ch_{i}")
-                h['start'] = cols[1].number_input("Inizio", value=float(h['start']), key=f"st_{i}")
-                cols[2].caption(f"🤖 {h.get('reason', '')}")
-
-        if st.button("🎬 2. GENERA VIDEO FINALE"):
-            to_render = [h for h in valid_h if h['include']]
+        if valid_h:
+            with st.expander("✏️ Modifica Highlights", expanded=True):
+                for i, h in enumerate(valid_h):
+                    cols = st.columns([1, 2, 3])
+                    h['include'] = cols[0].checkbox("Usa", value=True, key=f"ch_{i}")
+                    h['start'] = cols[1].number_input("Inizio (sec)", value=float(h['start']), step=0.1, key=f"st_{i}")
+                    cols[2].write(f"**AI:** {h.get('reason', '')}")
             
-            # Gestione audio
-            a_path = None
-            if audio_upload:
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as af:
-                    af.write(audio_upload.getvalue())
-                    a_path = af.name
-            
-            with st.spinner("Rendering in corso..."):
-                final_path = render_sizzle(to_render, plat, ctype, clip_duration, add_watermark, watermark_text, a_path)
-            
-            if final_path:
-                st.video(final_path)
-                with open(final_path, "rb") as f:
-                    st.download_button("📥 Scarica Video", f, file_name="puglia_sizzle.mp4")
-                if a_path: cleanup_temp_files([a_path])
-
-# Pulizia finale
-if st.sidebar.button("🧹 Reset Sessione"):
-    if 'h_list' in st.session_state:
-        cleanup_temp_files([h['path'] for h in st.session_state['h_list'] if 'path' in h])
-        del st.session_state['h_list']
-    st.rerun()
+            if st.button("🎬 2. GENERA VIDEO FINALE"):
+                to_render = [h for h in valid_h if h['include']]
+                if to_render:
+                    a_path = None
+                    if audio_upload:
+                        with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as af:
+                            af.write(audio_upload.getvalue())
+                            a_path = af.name
+                    
+                    with st.spinner("Creazione montaggio in corso..."):
+                        final_path = render_sizzle(to_render, plat, ctype, clip_duration, a_path)
+                    
+                    if final_path:
+                        st.success("Video generato!")
+                        st.video(final_path)
+                        with open(final_path, "rb") as f:
+                            st.download_button("📥 Scarica", f, file_name="sizzle.mp4")
+                        if a_path: cleanup_temp_files([a_path])

@@ -1,10 +1,9 @@
 import streamlit as st
 import PIL.Image
 
-# --- 1. FIX COMPATIBILITÀ (Deve essere la prima cosa nel codice) ---
+# --- 1. FIX COMPATIBILITÀ PILLOW ---
 if not hasattr(PIL.Image, 'ANTIALIAS'):
-    # Fix per Python 3.12/3.14 e Pillow 10+
-    PIL.Image.ANTIALIAS = 1 # Equivalente a Resampling.LANCZOS
+    PIL.Image.ANTIALIAS = 1 
 
 import google.generativeai as genai
 import moviepy.editor as mp
@@ -16,11 +15,11 @@ import time
 import concurrent.futures
 import numpy as np
 
-# Configurazione FFmpeg e ImageMagick
+# Configurazione FFmpeg
 if os.path.exists("/usr/bin/convert"):
     change_settings({"IMAGEMAGICK_BINARY": "/usr/bin/convert"})
 
-st.set_page_config(page_title="Puglia Sizzle Lab Pro", layout="wide", page_icon="🎬")
+st.set_page_config(page_title="Puglia Sizzle Lab Pro", layout="wide")
 
 # --- API KEY ---
 api_key = st.secrets.get("GEMINI_API_KEY")
@@ -28,11 +27,8 @@ if not api_key:
     st.error("Manca GEMINI_API_KEY nei Secrets.")
     st.stop()
 
-# Forziamo REST per evitare blocchi di rete su Streamlit Cloud
 genai.configure(api_key=api_key, transport='rest')
-
-# Modello più stabile per video
-MODEL_ID = "gemini-1.5-flash-002"
+MODEL_ID = "gemini-1.5-flash"
 
 FMT = {
     "Instagram": {"Reels": (720, 1280), "Storie": (720, 1280), "Post": (720, 900)},
@@ -45,13 +41,11 @@ FMT = {
 # ─────────────────────────────────────────
 
 def get_audio_peak(p, hint):
-    """Analisi audio per centrare il taglio sul beat."""
     try:
         v = mp.VideoFileClip(p)
         if not v.audio: return hint
         step = 0.5
         ts = np.arange(0, max(0, v.duration - step), step)
-        # Calcolo RMS manuale compatibile con Numpy < 2.0
         rms = []
         for t in ts:
             chunk = v.audio.subclip(t, min(t + step, v.duration)).to_soundarray(fps=22050)
@@ -63,7 +57,6 @@ def get_audio_peak(p, hint):
     except: return hint
 
 def scan_single_video(f, cat):
-    """Cerca 4 momenti migliori per ogni video per allungare il montaggio."""
     p = ""
     v_ai = None
     try:
@@ -76,16 +69,7 @@ def scan_single_video(f, cat):
             time.sleep(2)
         
         model = genai.GenerativeModel(MODEL_ID)
-        # Chiediamo 4 momenti invece di 1 per avere un video più lungo
-        prompt = f"""Analizza questo video di {cat} (Puglia). 
-        Trova i 4 momenti più energetici e spettacolari.
-        Rispondi SOLO con una lista JSON di 4 oggetti: 
-        [
-          {{"start": 12.5, "reason": "descrizione"}},
-          {{"start": 30.0, "reason": "descrizione"}},
-          {{"start": 45.2, "reason": "descrizione"}},
-          {{"start": 5.5, "reason": "descrizione"}}
-        ]"""
+        prompt = f"Analizza questo video di {cat}. Trova i 4 momenti migliori. Rispondi SOLO con una lista JSON di 4 oggetti: [{{'start': float, 'reason': string}}]"
         
         r = model.generate_content([v_ai, prompt], generation_config={"response_mime_type": "application/json"})
         highlights = json.loads(r.text)
@@ -96,7 +80,7 @@ def scan_single_video(f, cat):
             results.append({
                 'start': start_t,
                 'path': p,
-                'name': f"{f.name} (Taglio {i+1})",
+                'name': f"{f.name} (Clip {i+1})",
                 'include': True,
                 'reason': h.get('reason', '')
             })
@@ -110,14 +94,12 @@ def scan_single_video(f, cat):
             except: pass
 
 def render_sizzle(data, plat, ctype, dur, audio_p):
-    """Esegue il montaggio finale."""
     try:
         tw, th = FMT[plat][ctype]
         clips = []
         for d in data:
             if not d.get('include') or 'error' in d: continue
             v = mp.VideoFileClip(d['path'])
-            # Taglio e resize protetto
             c = v.subclip(d['start'], min(d['start'] + dur, v.duration)).resize(height=th)
             if c.w > tw: c = c.crop(x_center=c.w/2, width=tw)
             clips.append(c.fadein(0.1).fadeout(0.1))
@@ -128,29 +110,68 @@ def render_sizzle(data, plat, ctype, dur, audio_p):
         if audio_p:
             bg = mp.AudioFileClip(audio_p).subclip(0, final.duration).audio_fadeout(2)
             if final.audio:
-                final.audio = mp.CompositeAudioClip([bg.volumex(0.85), final.audio.volumex(0.15)])
+                final.audio = mp.CompositeAudioClip([bg.volumex(0.8), final.audio.volumex(0.2)])
             else:
                 final.audio = bg
         
-        out = f"puglia_sizzle_{int(time.time())}.mp4"
+        out = f"final_{int(time.time())}.mp4"
         final.write_videofile(out, codec="libx264", audio_codec="aac", fps=24, preset="ultrafast", logger=None)
-        
-        for c in clips: c.close()
         return out
     except Exception as e:
-        st.error(f"Errore rendering: {e}")
+        st.error(f"Errore render: {e}")
         return None
 
 # ─────────────────────────────────────────
-# INTERFACCIA UTENTE
+# INTERFACCIA
 # ─────────────────────────────────────────
 
 st.title("🎬 Puglia Sizzle Lab Pro ☀️")
-st.markdown("---")
 
 with st.sidebar:
     st.header("📍 Configurazione")
-    cat = st.selectbox("Tipo Evento", ["DJ Set", "Live Music", "Wedding Puglia", "Karaoke"])
+    cat = st.selectbox("Evento", ["DJ Set", "Wedding Puglia", "Musica"])
     plat = st.selectbox("Social", ["Instagram", "TikTok", "Facebook"])
     ctype = st.radio("Formato", ["Reels", "Storie", "Post"])
-    dur = st.slider("Ritmo tagli (durata clip in sec)", 1.0, 4
+    dur = st.slider("Durata clip (s)", 1.0, 4.0, 2.5)
+    audio_up = st.file_uploader("Audio Soundtrack (MP3)", type=["mp3"])
+    files = st.file_uploader("Carica Video", type=["mp4", "mov"], accept_multiple_files=True)
+
+if files:
+    if st.button("🔎 1. ANALIZZA HIGHLIGHTS AI", type="primary"):
+        all_res = []
+        with st.status("Analisi in corso...") as status:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+                futures = [executor.submit(scan_single_video, f, cat) for f in files[:10]]
+                for future in concurrent.futures.as_completed(futures):
+                    res_list = future.result()
+                    for r in res_list:
+                        all_res.append(r)
+                        if 'error' not in r: st.write(f"✅ Trovato momento in {r['name']}")
+        st.session_state['h_list'] = all_res
+
+    if 'h_list' in st.session_state:
+        valid = [h for h in st.session_state['h_list'] if 'error' not in h]
+        if valid:
+            with st.expander("✏️ Gestisci i tagli", expanded=True):
+                for i, h in enumerate(valid):
+                    c1, c2 = st.columns([1, 4])
+                    h['include'] = c1.checkbox("Usa", value=True, key=f"k_{i}")
+                    c2.info(f"{h['name']}: {h['reason']}")
+
+            if st.button("🎬 2. GENERA VIDEO FINALE", type="primary"):
+                ap = None
+                if audio_up:
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as af:
+                        af.write(audio_up.getvalue())
+                        ap = af.name
+                
+                with st.spinner("Creazione video..."):
+                    fp = render_sizzle(valid, plat, ctype, dur, ap)
+                
+                if fp:
+                    st.video(fp)
+                    st.download_button("📥 Scarica", open(fp, "rb"), file_name="puglia_sizzle.mp4")
+
+if st.sidebar.button("🧹 Reset"):
+    st.session_state.clear()
+    st.rerun()

@@ -4,98 +4,87 @@ import moviepy.editor as mp
 import tempfile, os, json, time, re
 import PIL.Image
 
-# --- CORREZIONE COMPATIBILITÀ PYTHON 3.14 ---
+# --- PATCH PER PILLOW (PYTHON 3.14) ---
 if not hasattr(PIL.Image, 'ANTIALIAS'):
     PIL.Image.ANTIALIAS = PIL.Image.LANCZOS
 
-st.set_page_config(page_title="Puglia Sizzle Lab Pro", layout="wide")
-st.markdown("""<style>.main{background-color:#0f1116;color:white;}.stButton>button{background:linear-gradient(90deg,#00f2ea,#FF0050);color:white;border:none;border-radius:10px;height:55px;width:100%;font-weight:bold;}</style>""", unsafe_allow_html=True)
+st.set_page_config(page_title="Viral Lab Bari", layout="wide")
+st.markdown("<style>.main{background-color:#0f1116;color:white;}.stButton>button{background:linear-gradient(90deg,#00f2ea,#FF0050);color:white;font-weight:bold;height:55px;border:none;border-radius:12px;width:100%;}</style>", unsafe_allow_html=True)
 
-st.title("🎬 Puglia Sizzle Lab: Il Regista AI ☀️")
-st.markdown("---")
+st.title("🎬 Puglia Viral Lab: Highlights ☀️")
 
-# --- API SETUP ---
+# API
 api_key = st.secrets.get("GEMINI_API_KEY")
 if not api_key:
-    st.error("Manca GEMINI_API_KEY nei Secrets.")
+    st.error("Manca API KEY nei Secrets.")
     st.stop()
 genai.configure(api_key=api_key)
 
+# Formati (Risoluzione 720p per stabilità)
 FMT = {
     "Instagram": {"Reels": (720, 1280), "Storie": (720, 1280), "Post": (720, 900)},
     "TikTok": {"Reels": (720, 1280), "Storie": (720, 1280), "Post": (720, 1280)},
     "Facebook": {"Post": (720, 720), "Reels": (720, 1280), "Storie": (720, 1280)}
 }
 
-# --- RENDERING RITMICO (Sincronizzato 2.14s) ---
-def build_sizzle_master(data_list, plat, ctype):
-    tw, th = FMT[plat][ctype]
-    clips = []
-    pb = st.progress(0)
-    for i, d in enumerate(data_list):
-        try:
-            with mp.VideoFileClip(d['path']) as v:
-                start_h = float(d['start'])
-                # 2.14 secondi è la misura perfetta per il beat matching
-                end_h = min(start_h + 2.14, v.duration)
-                clip = v.subclip(start_h, end_h).resize(height=th)
-                final = clip.crop(x_center=clip.w/2, width=tw) if clip.w > tw else clip
-                clips.append(final.copy().fadein(0.1).fadeout(0.1))
-            pb.progress((i + 1) / len(data_list))
-        except: continue
-    
-    if not clips: return None
-    sizzle = mp.concatenate_videoclips(clips, method="compose")
-    out = f"puglia_reel_{int(time.time())}.mp4"
-    sizzle.write_videofile(out, codec="libx264", audio_codec="aac", fps=24, logger=None, preset='ultrafast', threads=1)
-    return out
-
-# --- UI SIDEBAR ---
 with st.sidebar:
-    st.header("📍 Bari/Puglia Control")
-    cat = st.selectbox("Tipo Evento", ["DJ Set", "Musica dal Vivo", "Karaoke", "Wedding Music", "Wedding Band"])
+    st.header("📍 Bari/Puglia Lab")
+    cat = st.selectbox("Evento", ["DJ Set", "Musica Live", "Wedding Music", "Wedding Band", "Karaoke"])
     plat = st.selectbox("Piattaforma", ["Instagram", "TikTok", "Facebook"])
     ctype = st.radio("Formato", ["Reels", "Storie", "Post"])
-    files = st.file_uploader("📤 Carica i video grezzi", type=["mp4", "mov"], accept_multiple_files=True)
+    files = st.file_uploader("📤 Video grezzi", type=["mp4", "mov"], accept_multiple_files=True)
 
-# --- WORKFLOW ---
-if files:
-    if st.button("🔎 1. SCANSIONA HIGHLIGHTS E TROVA MUSICA"):
-        highlights = []
-        with st.status("🛸 AI sta analizzando i momenti più forti...") as stt:
-            model = genai.GenerativeModel('models/gemini-1.5-flash')
-            for f in files:
-                t = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
-                t.write(f.read()); p = t.name
-                v_ai = genai.upload_file(path=p)
-                while genai.get_file(v_ai.name).state.name == "PROCESSING": time.sleep(4)
-                
-                time.sleep(12) # Pausa critica stabilità Google
-                prompt = f"""
-                Sei un video editor esperto a Bari. Analizza questo video di {cat}.
-                Trova l'highlight esatto di 2 secondi (drop, climax, brindisi).
-                Suggerisci anche 3 trend musicali Italia.
-                RISPONDI SOLO JSON: {{"start": float, "reason": "string", "music": "string"}}
-                """
-                try:
-                    r = model.generate_content([v_ai, prompt], generation_config={"response_mime_type": "application/json"})
-                    d = json.loads(r.text)
-                    d.update({'path': p, 'name': f.name})
-                    highlights.append(d)
-                except: pass
-            
-            st.session_state['h_list'] = highlights
-            stt.update(label="Analisi completata!", state="complete")
-
-    if 'h_list' in st.session_state and st.session_state['h_list']:
-        st.success(f"🔥 Ho isolato {len(st.session_state['h_list'])} clip spettacolari!")
-        st.info(f"🎵 **MUSICA SUGGERITA:** {st.session_state['h_list'][0].get('music','')}")
+if files and st.button("🔥 CREA REEL HIGHLIGHTS"):
+    clips = []
+    temp_paths = []
+    
+    with st.status("🚀 Avvio Laboratorio Virale...") as status:
+        model = genai.GenerativeModel('models/gemini-1.5-flash')
         
-        if st.button("🎬 2. GENERA MONTAGGIO A TEMPO"):
-            with st.status("✂️ Montaggio ritmico in corso...") as stt:
-                final = build_sizzle_master(st.session_state['h_list'], plat, ctype)
-                if final:
-                    st.video(final)
-                    with open(final, "rb") as fr:
-                        st.download_button("📥 SCARICA REEL FINALE", fr, file_name="bari_viral_reel.mp4")
-                stt.update(label="Reel completato!", state="complete")
+        for f in files:
+            status.write(f"Scansione: {f.name}")
+            t = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
+            t.write(f.read()); p = t.name
+            temp_paths.append(p)
+            
+            # AI Analisi Highlights
+            v_ai = genai.upload_file(path=p)
+            while genai.get_file(v_ai.name).state.name == "PROCESSING": time.sleep(4)
+            time.sleep(12)
+            
+            prompt = f"Sei un regista a Bari. Trova il momento più forte di 2.5s in questo video di {cat}. Ritorna SOLO JSON: {{'start': float, 'music': '3 trend italia'}}"
+            try:
+                r = model.generate_content([v_ai, prompt], generation_config={"response_mime_type": "application/json"})
+                d = json.loads(r.text)
+                
+                # Montaggio al volo della clip
+                tw, th = FMT[plat][ctype]
+                with mp.VideoFileClip(p) as video:
+                    st_t = float(d['start'])
+                    sub = video.subclip(st_t, min(st_t + 2.5, video.duration)).resize(height=th)
+                    final_sub = sub.crop(x_center=sub.w/2, width=tw) if sub.w > tw else sub
+                    clips.append(final_sub.copy())
+                status.write(f"✅ Highlight {f.name} isolato.")
+                st.session_state['last_music'] = d['music']
+            except:
+                status.write(f"❌ Errore su {f.name}, salto...")
+            
+            genai.delete_file(v_ai.name)
+
+        if clips:
+            status.write("🎬 Unione clip e rendering finale...")
+            final_video = mp.concatenate_videoclips(clips, method="compose")
+            out_p = f"puglia_reel_{int(time.time())}.mp4"
+            final_video.write_videofile(out_p, codec="libx264", audio_codec="aac", fps=24, logger=None, preset='ultrafast', threads=1)
+            
+            st.success("✨ REEL PRONTO PER BARI E PROVINCIA!")
+            st.video(out_p)
+            st.info(f"🎵 **Musica Consigliata:** {st.session_state.get('last_music', 'Trend TikTok Italia')}")
+            with open(out_p, "rb") as vf:
+                st.download_button("📥 SCARICA IL VIDEO", vf, file_name="bari_reel.mp4")
+        else:
+            st.error("Nessun momento rilevato. Riprova con altri video.")
+
+    # Pulizia
+    for p in temp_paths: 
+        if os.path.exists(p): os.remove(p)

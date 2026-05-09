@@ -2,98 +2,100 @@ import streamlit as st
 import google.generativeai as genai
 import moviepy.editor as mp
 import tempfile, os, json, time, re
+import PIL.Image
 
-# Configurazione Pagina
-st.set_page_config(page_title="Viral Lab Bari", layout="wide")
-st.title("🎬 Puglia Sizzle Lab ☀️")
+# --- CORREZIONE COMPATIBILITÀ PYTHON 3.14 ---
+if not hasattr(PIL.Image, 'ANTIALIAS'):
+    PIL.Image.ANTIALIAS = PIL.Image.LANCZOS
 
-# API Setup
+st.set_page_config(page_title="Puglia Sizzle Lab Pro", layout="wide")
+st.markdown("""<style>.main{background-color:#0f1116;color:white;}.stButton>button{background:linear-gradient(90deg,#00f2ea,#FF0050);color:white;border:none;border-radius:10px;height:55px;width:100%;font-weight:bold;}</style>""", unsafe_allow_html=True)
+
+st.title("🎬 Puglia Sizzle Lab: Il Regista AI ☀️")
+st.markdown("---")
+
+# --- API SETUP ---
 api_key = st.secrets.get("GEMINI_API_KEY")
 if not api_key:
-    st.error("Inserisci la chiave API nei Secrets di Streamlit.")
+    st.error("Manca GEMINI_API_KEY nei Secrets.")
     st.stop()
 genai.configure(api_key=api_key)
 
-# Mappa Formati (720p per non far crashare il server)
 FMT = {
-    "Instagram": (720, 1280),
-    "TikTok": (720, 1280),
-    "Facebook": (720, 720)
+    "Instagram": {"Reels": (720, 1280), "Storie": (720, 1280), "Post": (720, 900)},
+    "TikTok": {"Reels": (720, 1280), "Storie": (720, 1280), "Post": (720, 1280)},
+    "Facebook": {"Post": (720, 720), "Reels": (720, 1280), "Storie": (720, 1280)}
 }
 
-with st.sidebar:
-    st.header("📍 Configurazione")
-    cat = st.selectbox("Tipo Evento", ["DJ Set", "Musica dal Vivo", "Wedding Band", "Karaoke"])
-    plat = st.selectbox("Piattaforma", ["Instagram", "TikTok", "Facebook"])
-    files = st.file_uploader("📤 Carica i video", type=["mp4", "mov"], accept_multiple_files=True)
-
-if files and st.button("🚀 GENERA VIDEO FINALE"):
+# --- RENDERING RITMICO (Sincronizzato 2.14s) ---
+def build_sizzle_master(data_list, plat, ctype):
+    tw, th = FMT[plat][ctype]
     clips = []
-    temp_files = []
+    pb = st.progress(0)
+    for i, d in enumerate(data_list):
+        try:
+            with mp.VideoFileClip(d['path']) as v:
+                start_h = float(d['start'])
+                # 2.14 secondi è la misura perfetta per il beat matching
+                end_h = min(start_h + 2.14, v.duration)
+                clip = v.subclip(start_h, end_h).resize(height=th)
+                final = clip.crop(x_center=clip.w/2, width=tw) if clip.w > tw else clip
+                clips.append(final.copy().fadein(0.1).fadeout(0.1))
+            pb.progress((i + 1) / len(data_list))
+        except: continue
     
-    try:
-        with st.status("Lavorando sui tuoi video...") as status:
+    if not clips: return None
+    sizzle = mp.concatenate_videoclips(clips, method="compose")
+    out = f"puglia_reel_{int(time.time())}.mp4"
+    sizzle.write_videofile(out, codec="libx264", audio_codec="aac", fps=24, logger=None, preset='ultrafast', threads=1)
+    return out
+
+# --- UI SIDEBAR ---
+with st.sidebar:
+    st.header("📍 Bari/Puglia Control")
+    cat = st.selectbox("Tipo Evento", ["DJ Set", "Musica dal Vivo", "Karaoke", "Wedding Music", "Wedding Band"])
+    plat = st.selectbox("Piattaforma", ["Instagram", "TikTok", "Facebook"])
+    ctype = st.radio("Formato", ["Reels", "Storie", "Post"])
+    files = st.file_uploader("📤 Carica i video grezzi", type=["mp4", "mov"], accept_multiple_files=True)
+
+# --- WORKFLOW ---
+if files:
+    if st.button("🔎 1. SCANSIONA HIGHLIGHTS E TROVA MUSICA"):
+        highlights = []
+        with st.status("🛸 AI sta analizzando i momenti più forti...") as stt:
             model = genai.GenerativeModel('models/gemini-1.5-flash')
-            
             for f in files:
-                status.write(f"Analizzando: {f.name}")
-                # Salvataggio temporaneo
                 t = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4")
-                t.write(f.read())
-                p = t.name
-                temp_files.append(p)
-                
-                # Upload e Analisi AI
+                t.write(f.read()); p = t.name
                 v_ai = genai.upload_file(path=p)
-                while genai.get_file(v_ai.name).state.name == "PROCESSING":
-                    time.sleep(3)
+                while genai.get_file(v_ai.name).state.name == "PROCESSING": time.sleep(4)
                 
-                # Pausa per evitare errore 404
-                time.sleep(10)
-                
-                prompt = f"Sei un editor a Bari. Trova l'highlight di 2.5s in questo video di {cat}. Rispondi SOLO JSON: {{'start': float}}"
-                r = model.generate_content([v_ai, prompt], generation_config={"response_mime_type": "application/json"})
-                
+                time.sleep(12) # Pausa critica stabilità Google
+                prompt = f"""
+                Sei un video editor esperto a Bari. Analizza questo video di {cat}.
+                Trova l'highlight esatto di 2 secondi (drop, climax, brindisi).
+                Suggerisci anche 3 trend musicali Italia.
+                RISPONDI SOLO JSON: {{"start": float, "reason": "string", "music": "string"}}
+                """
                 try:
-                    data = json.loads(r.text)
-                    start_t = float(data['start'])
-                    
-                    # Caricamento e Taglio immediato (risparmio RAM)
-                    target_w, target_h = FMT[plat]
-                    with mp.VideoFileClip(p) as video_clip:
-                        # Taglio e Resize
-                        sub = video_clip.subclip(start_t, min(start_t + 2.5, video_clip.duration)).resize(height=target_h)
-                        # Crop centrale
-                        if sub.w > target_w:
-                            final_sub = sub.crop(x_center=sub.w/2, width=target_w)
-                        else:
-                            final_sub = sub
-                        
-                        clips.append(final_sub.copy())
-                    status.write(f"✅ Clip {f.name} pronta.")
-                except:
-                    status.write(f"⚠️ Impossibile trovare highlight in {f.name}, salto...")
-                
-                # Pulizia file su Google
-                genai.delete_file(v_ai.name)
+                    r = model.generate_content([v_ai, prompt], generation_config={"response_mime_type": "application/json"})
+                    d = json.loads(r.text)
+                    d.update({'path': p, 'name': f.name})
+                    highlights.append(d)
+                except: pass
+            
+            st.session_state['h_list'] = highlights
+            stt.update(label="Analisi completata!", state="complete")
 
-            if clips:
-                status.write("🎬 Creazione montaggio finale (Sizzle Reel)...")
-                final_video = mp.concatenate_videoclips(clips, method="compose")
-                out_path = "video_virale_puglia.mp4"
-                final_video.write_videofile(out_path, codec="libx264", audio_codec="aac", fps=24, logger=None, preset='ultrafast')
-                
-                st.video(out_path)
-                with open(out_path, "rb") as vf:
-                    st.download_button("📥 SCARICA IL VIDEO PRONTO", vf, file_name="bari_viral_reel.mp4")
-                st.success("Fatto! Caricalo sui social con un audio trend.")
-            else:
-                st.error("Non è stato possibile creare nessuna clip. Riprova con video diversi.")
-
-    except Exception as e:
-        st.error(f"Errore durante il processo: {e}")
-    
-    finally:
-        # Pulizia totale file temporanei
-        for p in temp_files:
-            if os.path.exists(p): os.remove(p)
+    if 'h_list' in st.session_state and st.session_state['h_list']:
+        st.success(f"🔥 Ho isolato {len(st.session_state['h_list'])} clip spettacolari!")
+        st.info(f"🎵 **MUSICA SUGGERITA:** {st.session_state['h_list'][0].get('music','')}")
+        
+        if st.button("🎬 2. GENERA MONTAGGIO A TEMPO"):
+            with st.status("✂️ Montaggio ritmico in corso...") as stt:
+                final = build_sizzle_master(st.session_state['h_list'], plat, ctype)
+                if final:
+                    st.video(final)
+                    with open(final, "rb") as fr:
+                        st.download_button("📥 SCARICA REEL FINALE", fr, file_name="bari_viral_reel.mp4")
+                stt.update(label="Reel completato!", state="complete")

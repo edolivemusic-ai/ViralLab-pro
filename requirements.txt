@@ -1,8 +1,9 @@
-streamlit>=1.40.0
+streamlit>=1.42.0
 google-generativeai>=0.8.3
 moviepy==1.0.3
-Pillow>=10.0.0
-numpy<2.0.0
-imageio==2.33.0
-imageio-ffmpeg>=0.4.9
+imageio==2.35.1
+imageio-ffmpeg>=0.5.1
 proglog
+decorator>=4.0.2,<5.0.0
+Pillow
+google-auth

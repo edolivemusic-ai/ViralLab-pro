@@ -1,6 +1,1 @@
 ffmpeg
-streamlit
-google-generativeai
-Pillow
-moviepy # <-- ASSICURATI CHE QUESTA RIGA SIA PRESENTE!
-numpy

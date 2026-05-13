@@ -7,8 +7,11 @@ import json
 import time
 import concurrent.futures
 import numpy as np
-from google import genai
-from google.genai import types
+import google.generativeai as genai
+# Non è necessario importare 'types' separatamente se usi il namespace genai
+# ma se la tua logica originale ne ha bisogno, potrebbe essere:
+# from google.generativeai import types
+# Ma per ora, proviamo prima con l'import principale.
 from moviepy.editor import ( # Moviepy import corretto
     VideoFileClip, AudioFileClip, concatenate_videoclips,
     CompositeAudioClip, CompositeVideoClip, TextClip

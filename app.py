@@ -314,7 +314,7 @@ def scan_single_video(f, prompt_template: str, cat: str) -> dict:
 
         # Chiamata al modello (nuovo SDK)
         response = client.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-2.5-flash",
             contents=[
                 types.Part.from_uri(
                     file_uri=uploaded_file_ref.uri,

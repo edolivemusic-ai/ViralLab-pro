@@ -1,14 +1,13 @@
-# app.py - Minima modifica per usare Gemini 2.5 Pro, mantenendo struttura originale
+# app.py - Versione corretta per deploy su Streamlit Cloud con st.secrets e Gemini 2.5 Pro
 
-# IMPORTNECESSARI (come nel tuo file originale)
+# IMPORTNECESSARI
 import streamlit as st
 import google.generativeai as genai
-import os
-from dotenv import load_dotenv
+# os e load_dotenv non sono più necessari se usi solo st.secrets
 from PIL import Image
 import logging
 
-# --- CONFIGURAZIONE LOGGER (come nel tuo file originale) ---
+# --- CONFIGURAZIONE LOGGER ---
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s",
@@ -19,29 +18,30 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# --- CONFIGURAZIONE API GEMINI (Mantenendo il tuo approccio, ma con modello corretto) ---
+# --- CONFIGURAZIONE API GEMINI CON SECRETS DI STREAMLIT ---
+# QUESTA È LA PARTE CRUCIALE PER IL DEPLOY
 
-# Carica la chiave API (come facevi tu, tramite .env o variabile d'ambiente)
-# Se stai per fare deploy su Streamlit Cloud, dovrai cambiare questa parte per usare st.secrets
-load_dotenv() # Carica variabili da .env, se esiste
-api_key = os.getenv("GOOGLE_API_KEY")
-
-if not api_key:
-    logger.error("Chiave API non trovata. Assicurati che GOOGLE_API_KEY sia impostata nel file .env o come variabile d'ambiente.")
-    st.error("ERRORE: Chiave API non trovata. Controlla la tua configurazione.")
-    st.stop() # Interrompe l'esecuzione se la chiave non è trovata
-
-# Configura l'API Gemini
 try:
+    # Accede alla chiave API che DEVI aver impostato nella sezione "Secrets"
+    # della tua app su Streamlit Cloud (o nella configurazione della tua piattaforma di deploy).
+    # Il nome della chiave deve corrispondere a quello che hai impostato lì.
+    # Convenzionalmente, usiamo "google_api_key".
+    api_key = st.secrets["google_api_key"]
     genai.configure(api_key=api_key)
-    logger.info("API Gemini configurata con successo.")
+    logger.info("API Gemini configurata con successo usando st.secrets.")
+except KeyError:
+    # Questo errore avviene se "google_api_key" NON è impostata nei secrets della piattaforma.
+    logger.error("Chiave API non trovata in st.secrets. Assicurati di aver impostato 'google_api_key' nella sezione Secrets dell'app.")
+    st.error("ERRORE: Chiave API non trovata nei secrets della piattaforma. Controlla la configurazione.")
+    st.stop() # Ferma l'esecuzione dell'app Streamlit
 except Exception as e:
+    # Gestisce altri possibili errori durante la configurazione
     logger.error(f"Errore durante la configurazione dell'API Gemini: {e}")
-    st.error(f"Errore configurazione API Gemini: {e}")
+    st.error(f"Errore durante la configurazione dell'API Gemini: {e}")
     st.stop()
 
 # --- SCELTA DEL MODELLO CORRETTA ---
-# MODIFICA PRINCIPALE: Cambia 'gemini-2.0-flash' con 'gemini-2.5-pro'
+# Usa gemini-2.5-pro per una migliore performance e finestra di contesto.
 MODEL_NAME = 'gemini-2.5-pro'
 
 try:
@@ -53,14 +53,14 @@ except Exception as e:
     st.stop()
 
 # --- IL RESTO DEL TUO CODICE ORIGINALE APP.PY ---
-# Tutto ciò che segue è il TUO codice originale, mantenuto intatto.
-# Le tue funzioni (handle_input_process, generate_video_from_audio, ecc.)
-# e la tua interfaccia utente Streamlit devono essere qui sotto.
+# Manteniamo intatta la tua logica esistente (interfaccia Streamlit, funzioni di elaborazione, ecc.)
+# Assicurati che le tue funzioni che chiamano l'API AI utilizzino il 'model' globale configurato sopra.
 
-# ESEMPIO (ASSUMENDO CHE IL TUO CODICE ORIGINALE CONTINUI QUI):
+# Esempio di come dovresti integrare:
+# Inizia qui il TUO codice originale, dopo la configurazione dell'API e del modello.
 
-# if __name__ == "__main__":
-#     st.title("ViralLab-pro - AI Powered Media Lab") # Manteniamo il tuo titolo
+# if __name__ == "__main__": # O dove inizia la logica della tua app
+#     st.title("ViralLab-pro - AI Powered Media Lab") # Titolo originale
 
 #     # ... (tutta la tua interfaccia utente: file uploader, text area, bottoni) ...
 
@@ -73,18 +73,11 @@ except Exception as e:
 #                 logger.info(f"Avvio elaborazione per il file: {uploaded_file.name} con prompt: {user_prompt}")
 #                 st.info("Elaborazione in corso, attendere prego...")
 
-#                 # LA TUA FUNZIONE PRINCIPALE CHE USA L'API AI
-#                 # Assicurati che questa funzione utilizzi il 'model' globale configurato sopra.
+#                 # Assicurati che la tua funzione principale (es. handle_input_process)
+#                 # utilizzi il 'model' globale configurato qui sopra.
 #                 # Se la tua funzione chiama internamente genai.GenerativeModel(),
-#                 # dovrai rimuovere quella parte e farla usare il 'model' globale.
-#                 # Esempio:
-#                 # result = handle_input_process(uploaded_file, user_prompt)
-#                 # O se la tua funzione riceve il modello:
-#                 # result = handle_input_process(uploaded_file, user_prompt, model)
-
-#                 # ESEMPIO DI COME POTREBBE ESSERE LA TUA CHIAMATA ALLA FUNZIONE ORIGINALE
-#                 # (SOSTITUISCI CON LA TUA VERA CHIAMATA ALLA FUNZIONE PRINCIPALE)
-#                 result = handle_input_process(uploaded_file, user_prompt) # Assumendo che usi il modello globale
+#                 # devi rimuovere quella chiamata e farla usare il 'model' globale.
+#                 result = handle_input_process(uploaded_file, user_prompt) # Adatta se la tua funzione riceve il modello
 
 #                 st.subheader("Risultato Elaborazione:")
 #                 st.write(result)

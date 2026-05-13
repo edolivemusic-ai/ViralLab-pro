@@ -3,4 +3,4 @@ google-genai>=2.0.0
 moviepy>=2.1.1
 Pillow>=10.0.0
 imageio-ffmpeg>=0.5.1
-numpy>=1.24.0
+numpy<2

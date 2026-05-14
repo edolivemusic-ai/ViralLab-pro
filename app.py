@@ -366,53 +366,114 @@ def render_sizzle(
     watermark_text: str,
     audio_path: str | None,
 ) -> str | None:
-    """Rendering finale MoviePy 2.x."""
+    """
+    Rendering finale MoviePy 2.x.
+    Genera un mashup che riempie la durata MASSIMA per la piattaforma/formato scelto.
+    Se le clip non bastano, vengono riutilizzate in loop fino a coprire il target.
+    """
     tw, th = FMT[plat][ctype]
-    clips = []
-    progress_bar = st.progress(0)
+    target_duration = float(PLATFORM_LIMITS[plat][ctype])  # durata massima piattaforma
 
-    for i, d in enumerate(data_to_use[:MAX_CLIPS]):
+    # ── Costruisce il pool di clip base ─────────────────────────────────────
+    base_clips = []
+    for d in data_to_use:
         try:
             v = VideoFileClip(d["path"])
             start_time = float(d.get("start", 0))
             dur = float(d.get("clip_duration_override", clip_duration))
             end_time = min(start_time + dur, v.duration)
-
-            # Subclip + resize + crop  (API MoviePy 2.x)
             clip = v.subclipped(start_time, end_time).resized(height=th)
             if clip.w > tw:
                 clip = clip.cropped(x_center=clip.w / 2, width=tw)
-
-            # Fade in/out via effects
-            clip = clip.with_effects([FadeIn(0.15), FadeOut(0.15)])
-
-            # Watermark (opzionale)
-            if add_watermark and watermark_text.strip():
-                try:
-                    txt = (
-                        TextClip(
-                            text=watermark_text,
-                            font_size=28,
-                            color="white",
-                            font="DejaVu-Sans-Bold",
-                            stroke_color="black",
-                            stroke_width=1,
-                        )
-                        .with_position(("right", "bottom"))
-                        .with_duration(clip.duration)
-                    )
-                    clip = CompositeVideoClip([clip, txt])
-                except Exception:
-                    pass  # ImageMagick non disponibile: skip watermark
-
-            clips.append(clip)
-            v.close()
-
+            base_clips.append((clip, v))
         except Exception as err:
-            st.warning(f"Errore clip {d.get('name')}: {err}")
+            st.warning(f"Errore caricamento clip {d.get('name')}: {err}")
             continue
 
-        progress_bar.progress((i + 1) / len(data_to_use))
+    if not base_clips:
+        return None
+
+    # ── Calcola durata unitaria per riempire il target ──────────────────────
+    n_base = len(base_clips)
+    base_total = sum(c.duration for c, _ in base_clips)
+
+    # Quante volte ripetere il pool per raggiungere il target?
+    repeats = max(1, int(np.ceil(target_duration / base_total)))
+    # Durata ottimale per clip: distribuisce il tempo target sulle clip totali
+    n_total_clips = n_base * repeats
+    optimal_clip_dur = target_duration / n_total_clips
+
+    st.info(
+        f"🎬 Target: **{target_duration:.0f}s** · "
+        f"{n_base} highlight × {repeats} loop = **{n_total_clips} clip** · "
+        f"{optimal_clip_dur:.1f}s ciascuna"
+    )
+
+    # ── Costruisce la sequenza finale con loop ───────────────────────────────
+    clips = []
+    progress_bar = st.progress(0)
+    accumulated = 0.0
+    loop_idx = 0
+
+    while accumulated < target_duration:
+        for d in data_to_use:
+            if accumulated >= target_duration:
+                break
+            remaining = target_duration - accumulated
+            dur = min(optimal_clip_dur, remaining)
+            if dur < 0.3:
+                break
+            try:
+                v = VideoFileClip(d["path"])
+                start_time = float(d.get("start", 0))
+                end_time = min(start_time + dur, v.duration)
+                if end_time <= start_time:
+                    v.close()
+                    continue
+
+                clip = v.subclipped(start_time, end_time).resized(height=th)
+                if clip.w > tw:
+                    clip = clip.cropped(x_center=clip.w / 2, width=tw)
+                clip = clip.with_effects([FadeIn(0.15), FadeOut(0.15)])
+
+                # Watermark (opzionale)
+                if add_watermark and watermark_text.strip():
+                    try:
+                        txt = (
+                            TextClip(
+                                text=watermark_text,
+                                font_size=28,
+                                color="white",
+                                font="DejaVu-Sans-Bold",
+                                stroke_color="black",
+                                stroke_width=1,
+                            )
+                            .with_position(("right", "bottom"))
+                            .with_duration(clip.duration)
+                        )
+                        clip = CompositeVideoClip([clip, txt])
+                    except Exception:
+                        pass
+
+                clips.append(clip)
+                accumulated += clip.duration
+                v.close()
+                progress_bar.progress(min(accumulated / target_duration, 1.0))
+
+            except Exception as err:
+                st.warning(f"Errore clip {d.get('name')}: {err}")
+                continue
+
+        loop_idx += 1
+        if loop_idx > 20:  # safety cap: max 20 loop
+            break
+
+    # Chiudi i clip del pool base
+    for c, v in base_clips:
+        try:
+            v.close()
+        except Exception:
+            pass
 
     if not clips:
         return None
@@ -651,20 +712,21 @@ if files:
                 updated_list.append(h_copy)
             st.session_state["h_list"] = updated_list
 
-        # Stima durata e warning
+        # Info mashup: mostra durata target e n. highlight attivi
         active = [d for d in st.session_state["h_list"] if d.get("include", True)]
         estimated_sec = sum(d.get("clip_duration_override", clip_duration) for d in active)
+        target_sec = float(PLATFORM_LIMITS[plat][ctype])
+        n_active = len(active)
+        repeats = max(1, int(np.ceil(target_sec / estimated_sec))) if estimated_sec > 0 else 1
 
-        if estimated_sec > limit_sec:
-            st.markdown(
-                f'<div class="platform-warning">⚠ DURATA STIMATA {estimated_sec:.0f}s — LIMITE {plat} {ctype}: {limit_sec}s</div>',
-                unsafe_allow_html=True,
-            )
-        else:
-            st.markdown(
-                f'<div class="platform-ok">✓ DURATA STIMATA {estimated_sec:.0f}s — ENTRO IL LIMITE {plat} {ctype} ({limit_sec}s)</div>',
-                unsafe_allow_html=True,
-            )
+        st.markdown(
+            f'<div class="platform-ok">' +
+            f'🎬 MASHUP TARGET: <b>{target_sec:.0f}s</b> — ' +
+            f'{n_active} highlight × {repeats} loop — ' +
+            f'durata clip: <b>{target_sec / max(1, n_active * repeats):.1f}s</b> ciascuna' +
+            f'</div>',
+            unsafe_allow_html=True,
+        )
 
         if h_list:
             st.markdown(

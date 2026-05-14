@@ -2,14 +2,11 @@ services:
   - type: web
     name: highlights-video-detector
     runtime: python
-    buildCommand: |
-      apt-get update && apt-get install -y ffmpeg
-      pip install -r requirements.txt
-    startCommand: streamlit run app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true
+    pythonVersion: "3.11.9"
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: "streamlit run app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true"
     envVars:
       - key: GEMINI_API_KEY
         sync: false
-    disk:
-      name: temp-storage
-      mountPath: /tmp
-      sizeGB: 2
+      - key: IMAGEIO_FFMPEG_EXE
+        value: ffmpeg

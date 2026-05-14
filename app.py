@@ -314,7 +314,7 @@ def scan_single_video(f, prompt_template: str, cat: str) -> dict:
 
         # Chiamata al modello (nuovo SDK)
         response = client.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-2.5-pro-preview-05-06",
             contents=[
                 types.Part.from_uri(
                     file_uri=uploaded_file_ref.uri,
@@ -457,7 +457,7 @@ def render_sizzle(
 with st.sidebar:
     st.markdown("""
     <div class="sidebar-logo">HIGHLIGHTS<br><span>VIDEO</span> DETECTOR</div>
-    <div class="sidebar-version">v3.0 · Gemini 2.0 Flash</div>
+    <div class="sidebar-version">v3.0 · Gemini 2.5 Pro</div>
     """, unsafe_allow_html=True)
 
     st.markdown('<div class="section-label">// contenuto</div>', unsafe_allow_html=True)
@@ -505,7 +505,7 @@ st.markdown("""
 <div class="hero-block">
     <div class="hero-eyebrow">⚡ AI-Powered · Real-time Analysis</div>
     <div class="hero-title">HIGHLIGHTS<br><span>VIDEO</span> DETECTOR</div>
-    <div class="hero-sub">Gemini 2.0 Flash · Audio peak detection · Montaggio automatico</div>
+    <div class="hero-sub">Gemini 2.5 Pro · Audio peak detection · Montaggio automatico</div>
     <div class="hero-line"></div>
 </div>
 """, unsafe_allow_html=True)

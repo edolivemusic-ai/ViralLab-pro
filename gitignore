@@ -1,51 +1,43 @@
-# Ignora file di cache Python e file compilati
+# ── Python ──────────────────────────────
 __pycache__/
-*.py[cod]
-*$py.class
-
-# Ignora ambienti virtuali (molto importante!)
+*.pyc
+*.pyo
+*.pyd
 venv/
-.venv/
 env/
-env.bak/
-venv.bak/
+.venv/
+ENV/
 
-# Ignora file di configurazione IDE/editor
-.idea/
-.vscode/
-*.sublime-project
-*.sublime-workspace
+# ── Credenziali ─────────────────────────
+.env
+*.env
+.env.local
+.streamlit/secrets.toml
 
-# Ignora file specifici del sistema operativo
+# ── Video generati dall'app ─────────────
+highlights_*.mp4
+*.mp4
+*.mov
+*.avi
+*.mkv
+*.webm
+temp/
+*.temp
+*.tmp
+
+# ── Log ─────────────────────────────────
+*.log
+tempfile_*
+
+# ── OS ──────────────────────────────────
 .DS_Store
 .DS_Store?
 ._*
 .Spotlight-V100
-.TheEnd
 .Trashes
-.VolumeIcon.icns
+ehthumbs.db
 Thumbs.db
 
-# Ignora segreti locali e file di configurazione sensibili
-# IMPORTANTE: Assicurati che 'secrets.toml' sia qui se lo usi per test locali
-# Se usi Streamlit Cloud e configuri i secrets direttamente lì, questo file
-# potrebbe non essere usato, ma è comunque buona norma ignorarlo.
-.env
-secrets.toml
-
-# Ignora file temporanei creati dall'applicazione
-# Adatta questi pattern ai tipi di file che la tua app genera
-temp_*
-*.tmp
-output.log # File di log
-*.log
-
-# Ignora file video generati dall'app (se appropriato)
-*.mp4
-*.mov
-*.avi
-
-# Ignora altri file di build o cache
-.streamlit/
-*.sqlite
-*.sqlite3
+# ── IDE ─────────────────────────────────
+.vscode/
+.idea/

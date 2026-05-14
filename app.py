@@ -563,6 +563,7 @@ with st.sidebar:
     with st.expander("Personalizza prompt"):
         custom_prompt = st.text_area("Prompt AI", value=DEFAULT_PROMPT, height=160,
                                      label_visibility="collapsed")
+        st.session_state["_custom_prompt"] = custom_prompt
 
     st.markdown('<div class="section-label">// upload</div>', unsafe_allow_html=True)
     files = st.file_uploader("Video grezzi", type=["mp4", "mov"],
@@ -606,13 +607,24 @@ files_main = st.file_uploader(
     label_visibility="collapsed",
     key="files_main"
 )
-# Unisci file da sidebar e da pagina principale
+# ── Persistenza file e config in session_state ────────────────────────────
 if files_main:
-    files = files_main
-    cat = cat_main
-    plat = plat_main
-    ctype = ctype_main
-    limit_sec = PLATFORM_LIMITS[plat][ctype]
+    st.session_state["_files"] = files_main
+    st.session_state["_cat"] = cat_main
+    st.session_state["_plat"] = plat_main
+    st.session_state["_ctype"] = ctype_main
+elif files:
+    st.session_state["_files"] = files
+    st.session_state["_cat"] = cat
+    st.session_state["_plat"] = plat
+    st.session_state["_ctype"] = ctype
+
+# Leggi sempre da session_state in modo che sopravvivano al re-render
+files    = st.session_state.get("_files", files_main or files)
+cat      = st.session_state.get("_cat", cat_main)
+plat     = st.session_state.get("_plat", plat_main)
+ctype    = st.session_state.get("_ctype", ctype_main)
+limit_sec = PLATFORM_LIMITS[plat][ctype]
 
 # ─────────────────────────────────────────
 # LOGICA PRINCIPALE
@@ -659,9 +671,11 @@ if files:
             st.markdown('<div class="dot-live"></div> scansione in corso...', unsafe_allow_html=True)
 
             # Parallelo: max 3 thread per non saturare l'API Gemini
+            # Leggi prompt da session_state (sopravvive al re-render)
+            _prompt = st.session_state.get("_custom_prompt", DEFAULT_PROMPT)
             with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
                 future_map = {
-                    executor.submit(scan_single_video, f, custom_prompt, cat): f
+                    executor.submit(scan_single_video, f, _prompt, cat): f
                     for f in files[:MAX_CLIPS]
                 }
                 for future in concurrent.futures.as_completed(future_map):
@@ -700,7 +714,7 @@ if files:
                 matching = [f for f in files if f.name == err_item["name"]]
                 if matching:
                     with st.spinner(f"Retry {err_item['name']}..."):
-                        result = scan_single_video(matching[0], custom_prompt, cat)
+                        result = scan_single_video(matching[0], st.session_state.get("_custom_prompt", DEFAULT_PROMPT), cat)
                         if "error" not in result:
                             st.session_state["h_list"].append(result)
                             if result["path"]:

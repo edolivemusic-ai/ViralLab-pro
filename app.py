@@ -232,10 +232,17 @@ client = get_genai_client(api_key)
 # ─────────────────────────────────────────
 
 def save_uploaded_file(uploaded_file) -> str:
-    """Salva un UploadedFile Streamlit su disco e ritorna il path."""
+    """Salva un file su disco e ritorna il path. Accetta dict {name,bytes} o UploadedFile."""
+    data = uploaded_file["bytes"] if isinstance(uploaded_file, dict) else uploaded_file.getvalue()
     with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as t:
-        t.write(uploaded_file.getvalue())
+        t.write(data)
         return t.name
+
+def file_name(f) -> str:
+    return f["name"] if isinstance(f, dict) else f.name
+
+def file_size(f) -> int:
+    return f["size"] if isinstance(f, dict) else f.size
 
 
 def cleanup_files(paths: list):
@@ -303,7 +310,7 @@ def scan_single_video(f, prompt_template: str, cat: str) -> dict:
             uploaded_file_ref = client.files.upload(
                 file=fh,
                 config=types.UploadFileConfig(
-                    display_name=f.name,
+                    display_name=file_name(f),
                     mime_type="video/mp4",
                 )
             )
@@ -344,12 +351,12 @@ def scan_single_video(f, prompt_template: str, cat: str) -> dict:
         audio_peak = get_audio_peak(p, start_hint=ai_start)
         d["start_ai"] = ai_start
         d["start"] = audio_peak
-        d.update({"path": p, "name": f.name, "include": True})
+        d.update({"path": p, "name": file_name(f), "include": True})
         return d
 
     except Exception as err:
         cleanup_files([p])
-        return {"error": str(err), "name": f.name, "path": None}
+        return {"error": str(err), "name": file_name(f), "path": None}
 
     finally:
         # Elimina il file da Gemini cloud
@@ -592,13 +599,6 @@ with col2:
 with col3:
     ctype_main = st.radio("Formato", ["Reels", "Storie", "Post"], horizontal=True, key="ctype_main")
 
-# Sincronizza con le variabili usate dalla logica (sidebar ha priorità se aperta)
-if not files:
-    cat = cat_main
-    plat = plat_main
-    ctype = ctype_main
-    limit_sec = PLATFORM_LIMITS[plat][ctype]
-
 st.markdown('<div class="section-label">// carica video</div>', unsafe_allow_html=True)
 files_main = st.file_uploader(
     "Carica i tuoi video grezzi",
@@ -607,33 +607,35 @@ files_main = st.file_uploader(
     label_visibility="collapsed",
     key="files_main"
 )
-# ── Persistenza file e config in session_state ────────────────────────────
-if files_main:
-    st.session_state["_files"] = files_main
-    st.session_state["_cat"] = cat_main
-    st.session_state["_plat"] = plat_main
-    st.session_state["_ctype"] = ctype_main
-elif files:
-    st.session_state["_files"] = files
-    st.session_state["_cat"] = cat
-    st.session_state["_plat"] = plat
-    st.session_state["_ctype"] = ctype
 
-# Leggi sempre da session_state in modo che sopravvivano al re-render
-files    = st.session_state.get("_files", files_main or files)
-cat      = st.session_state.get("_cat", cat_main)
-plat     = st.session_state.get("_plat", plat_main)
-ctype    = st.session_state.get("_ctype", ctype_main)
+# ── Salva i file come bytes in session_state (sopravvivono al re-render) ──
+if files_main:
+    st.session_state["_file_data"] = [
+        {"name": f.name, "size": f.size, "bytes": f.getvalue()}
+        for f in files_main
+    ]
+    st.session_state["_cat"]   = cat_main
+    st.session_state["_plat"]  = plat_main
+    st.session_state["_ctype"] = ctype_main
+
+# Usa sidebar se disponibile, altrimenti inline
+cat   = st.session_state.get("_cat",   cat_main)
+plat  = st.session_state.get("_plat",  plat_main)
+ctype = st.session_state.get("_ctype", ctype_main)
 limit_sec = PLATFORM_LIMITS[plat][ctype]
+
+# Ricostruisce oggetti file-like da bytes per la logica successiva
+_file_data = st.session_state.get("_file_data", [])
+files = _file_data  # lista di dict {name, size, bytes}
 
 # ─────────────────────────────────────────
 # LOGICA PRINCIPALE
 # ─────────────────────────────────────────
 if files:
     for f in files:
-        if f.size > 500 * 1024 * 1024:
+        if file_size(f) > 500 * 1024 * 1024:
             st.markdown(
-                f'<div class="platform-warning">⚠ {f.name} · {f.size/1024/1024:.0f} MB — file molto grande</div>',
+                f'<div class="platform-warning">⚠ {file_name(f)} · {file_size(f)/1024/1024:.0f} MB — file molto grande</div>',
                 unsafe_allow_html=True,
             )
 
@@ -695,7 +697,7 @@ if files:
                                 f'→ peak: `{result["start"]:.1f}s`'
                             )
                     except Exception as err:
-                        errors.append({"name": f_ref.name, "error": str(err)})
+                        errors.append({"name": file_name(f_ref), "error": str(err)})
 
             st.session_state["h_list"] = all_h
             st.session_state["temp_files"] = temp_files_scan
@@ -711,7 +713,7 @@ if files:
                 unsafe_allow_html=True,
             )
             if col2.button("↺ RETRY", key=f"retry_{err_item['name']}"):
-                matching = [f for f in files if f.name == err_item["name"]]
+                matching = [f for f in files if file_name(f) == err_item["name"]]
                 if matching:
                     with st.spinner(f"Retry {err_item['name']}..."):
                         result = scan_single_video(matching[0], st.session_state.get("_custom_prompt", DEFAULT_PROMPT), cat)

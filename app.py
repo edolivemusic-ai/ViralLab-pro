@@ -174,7 +174,10 @@ hr { border-color: #1A1F2E !important; margin: 1.5rem 0 !important; }
 .dot-live { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #00F0D4; animation: pulse 1.6s ease infinite; margin-right: 6px; vertical-align: middle; }
 
 .stNumberInput input { background: #0C0E15 !important; border-color: #1A1F2E !important; color: #E8E8E0 !important; font-family: 'DM Mono', monospace !important; }
-#MainMenu, footer, header { visibility: hidden !important; }
+#MainMenu, footer { visibility: hidden !important; }
+header { visibility: visible !important; }
+header[data-testid="stHeader"] { background: transparent !important; }
+[data-testid="collapsedControl"] { display: flex !important; visibility: visible !important; color: #00F0D4 !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -577,31 +580,39 @@ st.markdown("""
 </div>
 """, unsafe_allow_html=True)
 
-# Hint apertura sidebar
+# ── Controlli inline nella pagina principale ──────────────────────────────
+st.markdown('<div class="section-label">// configurazione rapida</div>', unsafe_allow_html=True)
+
+col1, col2, col3 = st.columns(3)
+with col1:
+    cat_main = st.selectbox("Tipo contenuto", ["DJ Set", "Musica dal Vivo", "Karaoke", "Wedding Music", "Wedding Band"], key="cat_main")
+with col2:
+    plat_main = st.selectbox("Piattaforma", ["Instagram", "TikTok", "Facebook"], key="plat_main")
+with col3:
+    ctype_main = st.radio("Formato", ["Reels", "Storie", "Post"], horizontal=True, key="ctype_main")
+
+# Sincronizza con le variabili usate dalla logica (sidebar ha priorità se aperta)
 if not files:
-    st.markdown("""
-    <div style="
-        margin-top: 2rem;
-        display: flex;
-        align-items: center;
-        gap: 1rem;
-        background: #0C0E15;
-        border: 1px solid #1A1F2E;
-        border-left: 3px solid #00F0D4;
-        border-radius: 6px;
-        padding: 1.2rem 1.5rem;
-        font-family: 'DM Mono', monospace;
-        font-size: 0.82rem;
-        color: #8891A4;
-        animation: fadeSlideUp 0.8s ease 0.5s both;
-    ">
-        <span style="font-size: 1.5rem;">←</span>
-        <div>
-            <div style="color: #00F0D4; font-size: 0.65rem; letter-spacing: 0.2em; text-transform: uppercase; margin-bottom: 0.3rem;">Per iniziare</div>
-            Apri il pannello laterale sinistro, seleziona la piattaforma e carica i tuoi video
-        </div>
-    </div>
-    """, unsafe_allow_html=True)
+    cat = cat_main
+    plat = plat_main
+    ctype = ctype_main
+    limit_sec = PLATFORM_LIMITS[plat][ctype]
+
+st.markdown('<div class="section-label">// carica video</div>', unsafe_allow_html=True)
+files_main = st.file_uploader(
+    "Carica i tuoi video grezzi",
+    type=["mp4", "mov"],
+    accept_multiple_files=True,
+    label_visibility="collapsed",
+    key="files_main"
+)
+# Unisci file da sidebar e da pagina principale
+if files_main:
+    files = files_main
+    cat = cat_main
+    plat = plat_main
+    ctype = ctype_main
+    limit_sec = PLATFORM_LIMITS[plat][ctype]
 
 # ─────────────────────────────────────────
 # LOGICA PRINCIPALE

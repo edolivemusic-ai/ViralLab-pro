@@ -30,7 +30,7 @@ st.set_page_config(
     page_title="Highlights Video Detector",
     page_icon="⚡",
     layout="wide",
-    initial_sidebar_state="expanded",
+    initial_sidebar_state="auto",
 )
 
 # ─────────────────────────────────────────
@@ -576,6 +576,32 @@ st.markdown("""
     <div class="hero-line"></div>
 </div>
 """, unsafe_allow_html=True)
+
+# Hint apertura sidebar
+if not files:
+    st.markdown("""
+    <div style="
+        margin-top: 2rem;
+        display: flex;
+        align-items: center;
+        gap: 1rem;
+        background: #0C0E15;
+        border: 1px solid #1A1F2E;
+        border-left: 3px solid #00F0D4;
+        border-radius: 6px;
+        padding: 1.2rem 1.5rem;
+        font-family: 'DM Mono', monospace;
+        font-size: 0.82rem;
+        color: #8891A4;
+        animation: fadeSlideUp 0.8s ease 0.5s both;
+    ">
+        <span style="font-size: 1.5rem;">←</span>
+        <div>
+            <div style="color: #00F0D4; font-size: 0.65rem; letter-spacing: 0.2em; text-transform: uppercase; margin-bottom: 0.3rem;">Per iniziare</div>
+            Apri il pannello laterale sinistro, seleziona la piattaforma e carica i tuoi video
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────
 # LOGICA PRINCIPALE

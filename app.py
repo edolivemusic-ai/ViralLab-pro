@@ -206,9 +206,15 @@ DEFAULT_PROMPT = (
 # ─────────────────────────────────────────
 # API KEY & CLIENT
 # ─────────────────────────────────────────
-api_key = st.secrets.get("GEMINI_API_KEY")
+# Legge la key da variabile d'ambiente (Render) o da st.secrets (Streamlit Cloud)
+api_key = os.environ.get("GEMINI_API_KEY")
 if not api_key:
-    st.error("❌ Manca GEMINI_API_KEY nei Secrets di Streamlit.")
+    try:
+        api_key = st.secrets.get("GEMINI_API_KEY")
+    except Exception:
+        api_key = None
+if not api_key:
+    st.error("❌ Manca GEMINI_API_KEY. Aggiungila come variabile d'ambiente su Render.")
     st.stop()
 
 # Inizializza il client google-genai (nuovo SDK)

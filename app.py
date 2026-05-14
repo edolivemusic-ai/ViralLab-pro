@@ -1,24 +1,27 @@
-# app.py - Codice modificato per usare Gemini 2.5 Pro
-
 import streamlit as st
 import tempfile
 import os
 import json
 import time
 import concurrent.futures
+
 import numpy as np
-import google.generativeai as genai
-# Non è necessario importare 'types' separatamente se usi il namespace genai
-# ma se la tua logica originale ne ha bisogno, potrebbe essere:
-# from google.generativeai import types
-# Ma per ora, proviamo prima con l'import principale.
-from moviepy.editor import ( # Moviepy import corretto
-    VideoFileClip, AudioFileClip, concatenate_videoclips,
-    CompositeAudioClip, CompositeVideoClip, TextClip
+
+# ── NEW SDK (google-genai >= 1.0) ──────────────────────────
+from google import genai
+from google.genai import types
+
+# ── MOVIEPY 2.x ─────────────────────────────────────────────
+from moviepy import (
+    VideoFileClip,
+    AudioFileClip,
+    concatenate_videoclips,
+    CompositeAudioClip,
+    CompositeVideoClip,
+    TextClip,
 )
 from moviepy.video.fx import FadeIn, FadeOut
 from moviepy.audio.fx import AudioFadeOut
-import logging # Assicurati che sia presente
 
 # ─────────────────────────────────────────
 # STREAMLIT PAGE CONFIG
@@ -33,7 +36,6 @@ st.set_page_config(
 # ─────────────────────────────────────────
 # STILE GLOBALE
 # ─────────────────────────────────────────
-# Manteniamo il tuo stile CSS originale
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:wght@300;400;500&family=Outfit:wght@300;400;600;800&display=swap');
@@ -204,28 +206,17 @@ DEFAULT_PROMPT = (
 # ─────────────────────────────────────────
 # API KEY & CLIENT
 # ─────────────────────────────────────────
-# Utilizza st.secrets per ottenere la chiave API
-# Assicurati che la chiave sia impostata come GEMINI_API_KEY nei secrets di Streamlit Cloud
-try:
-    api_key = st.secrets["GEMINI_API_KEY"]
-    # Inizializza il client google-genai (nuovo SDK)
-    # Usiamo st.cache_resource per inizializzare il client una sola volta
-    @st.cache_resource
-    def get_genai_client(key: str):
-        return genai.Client(api_key=key)
-
-    client = get_genai_client(api_key)
-    logger.info("Client Gemini inizializzato con successo.")
-except KeyError:
-    logger.error("Chiave API 'GEMINI_API_KEY' non trovata in st.secrets.")
-    st.error("ERRORE: Chiave API Gemini non trovata nei secrets della piattaforma. "
-             "Assicurati di aver impostato GEMINI_API_KEY nella configurazione dei secrets.")
-    st.stop()
-except Exception as e:
-    logger.error(f"Errore durante l'inizializzazione del client Gemini: {e}")
-    st.error(f"Errore durante l'inizializzazione del client Gemini: {e}")
+api_key = st.secrets.get("GEMINI_API_KEY")
+if not api_key:
+    st.error("❌ Manca GEMINI_API_KEY nei Secrets di Streamlit.")
     st.stop()
 
+# Inizializza il client google-genai (nuovo SDK)
+@st.cache_resource
+def get_genai_client(key: str):
+    return genai.Client(api_key=key)
+
+client = get_genai_client(api_key)
 
 # ─────────────────────────────────────────
 # FUNZIONI UTILITY
@@ -233,10 +224,10 @@ except Exception as e:
 
 def save_uploaded_file(uploaded_file) -> str:
     """Salva un UploadedFile Streamlit su disco e ritorna il path."""
-    # Assicurati che tempfile sia importato
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as t: # Aggiunto suffix per compatibilità moviepy
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as t:
         t.write(uploaded_file.getvalue())
         return t.name
+
 
 def cleanup_files(paths: list):
     """Elimina una lista di file temporanei dal disco."""
@@ -244,311 +235,504 @@ def cleanup_files(paths: list):
         try:
             if path and os.path.exists(path):
                 os.unlink(path)
-        except Exception as e:
-            logger.warning(f"Errore durante la pulizia del file {path}: {e}") # Logga gli errori di cleanup
+        except Exception:
+            pass
+
 
 def get_audio_peak(video_path: str, start_hint: float = 0.0) -> float:
     """
-    Analisi audio-driven: trova il picco energetico del video.
-    Questa funzione non usa direttamente l'API Gemini, quindi la lasciamo invariata.
+    Analisi audio-driven: trova il picco RMS nell'intorno ±10s del suggerimento AI.
+    Ritorna il timestamp del picco in secondi.
     """
     try:
-        with VideoFileClip(video_path) as video:
-            audio = video.audio
-            if audio is None:
-                return start_hint # Nessun audio, ritorna hint
-
-            # Analisi del picco audio (questo è un placeholder, dovresti implementare la logica reale)
-            # Esempio: estrarre una parte dell'audio e analizzarne l'RMS o l'energia
-            # Questo richiede librerie come librosa o numpy per analisi audio più sofisticate.
-            # Per ora, ritorniamo un valore di default o l'hint.
-            logger.warning("get_audio_peak: Implementazione reale non presente, ritorna start_hint.")
+        v = VideoFileClip(video_path)
+        if v.audio is None:
+            v.close()
             return start_hint
 
-    except Exception as e:
-        logger.error(f"Errore in get_audio_peak per {video_path}: {e}")
+        duration = v.duration
+        step = 0.5
+        timestamps = np.arange(0, max(0, duration - step), step)
+        if len(timestamps) == 0:
+            v.close()
+            return start_hint
+
+        rms_values = []
+        for t in timestamps:
+            chunk = v.audio.subclipped(t, min(t + step, duration))
+            samples = chunk.to_soundarray(fps=22050)
+            rms = float(np.sqrt(np.mean(samples ** 2)))
+            rms_values.append(rms)
+        v.close()
+
+        idx_start = int(max(0, start_hint - 10) / step)
+        idx_end = int(min(duration, start_hint + 10) / step)
+        window = rms_values[idx_start:idx_end]
+
+        if window:
+            peak_idx = idx_start + int(np.argmax(window))
+        else:
+            peak_idx = int(np.argmax(rms_values))
+
+        return float(timestamps[min(peak_idx, len(timestamps) - 1)])
+
+    except Exception:
         return start_hint
 
-def get_gemini_response(prompt: str, cat: str, uploaded_file_path: str) -> dict:
+
+def scan_single_video(f, prompt_template: str, cat: str) -> dict:
     """
-    Invia una richiesta al modello Gemini per analizzare il video e trovare momenti chiave.
+    Scansiona un singolo video con Gemini (nuovo SDK google-genai).
+    Ritorna dict highlight oppure {'error': str, 'name': str}.
     """
-    # Costruisci il prompt con le informazioni specifiche
-    full_prompt = prompt.format(cat=cat)
+    p = save_uploaded_file(f)
+    uploaded_file_ref = None
 
     try:
-        # --- MODIFICA PRINCIPALE QUI ---
-        # Specifica il modello da usare per la generazione.
-        # Gemini 2.5 Pro è generalmente consigliato per compiti complessi e multimodali.
-        # Se hai bisogno di risposte più veloci e meno costose, potresti usare 'gemini-2.5-flash'.
-        # Il client può inferire il modello, ma è buona pratica specificarlo.
-        # Per ora, dato che il tuo prompt è testuale, possiamo lasciare che il client scelga
-        # o specificare un modello testuale se necessario.
-        # Il client.generate_content dovrebbe usare un modello di default adeguato o quello configurato.
-        # Se vuoi ASSICURARTI di usare Gemini 2.5 Pro, potresti dover inizializzare il modello esplicitamente:
-        # model = genai.GenerativeModel('gemini-2.5-pro')
-        # response = model.generate_content(full_prompt)
-        # Ma dato che stai usando client.generate_content, questo si basa sulla configurazione del client.
-        # La configurazione `genai.configure` dovrebbe usare il modello predefinito più recente, che è 2.5 Pro.
-        # Se ciò non dovesse bastare, dovrai passare il `model` alla funzione.
-        
-        # Il tuo codice originale usa client.generate_content(prompt).
-        # Assumendo che genai.configure abbia configurato il client per usare un modello recente
-        # come Gemini 2.5 Pro (o il suo default), questa chiamata dovrebbe funzionare.
-        # Se vuoi esplicitarlo, dovresti modificare questa funzione per ricevere il modello o
-        # inizializzare il modello qui. Dato che il tuo prompt è solo testo,
-        # la semplice chiamata `client.generate_content` potrebbe non essere multimodale.
-        
-        # Per essere SICURI di usare Gemini 2.5 Pro, potresti dover passare il modello:
-        # Inizializza il modello qui se necessario, o passalo come argomento alla funzione.
-        # Per semplicità, assumiamo che la configurazione del client usi già 2.5 Pro come default.
-        # Se si verificano problemi, dovrai esplicitare il modello qui.
+        # Upload su Gemini Files API (nuovo SDK)
+        with open(p, "rb") as fh:
+            uploaded_file_ref = client.files.upload(
+                file=fh,
+                config=types.UploadFileConfig(
+                    display_name=f.name,
+                    mime_type="video/mp4",
+                )
+            )
 
-        response = client.generate_content(
-            full_prompt,
-            # generations_config=types.GenerationConfig( # Esempio di configurazione
-            #     candidate_count=1,
-            #     stop_sequences=["}"], # Per assicurare output JSON valido
-            #     max_output_tokens=200
-            # ),
-            # safety_settings=[ # Configura safety settings se necessario
-            #     types.SafetySetting(category="HARM_CATEGORY_DANGEROUS_CONTENT", threshold="BLOCK_MEDIUM_AND_ABOVE")
-            # ]
+        # Polling stato
+        for _ in range(30):  # max 2.5 minuti
+            file_info = client.files.get(name=uploaded_file_ref.name)
+            if file_info.state.name == "ACTIVE":
+                break
+            if file_info.state.name == "FAILED":
+                raise RuntimeError("Gemini: upload fallito")
+            time.sleep(5)
+
+        time.sleep(2)  # piccola pausa di sicurezza
+
+        prompt = prompt_template.replace("{cat}", cat)
+
+        # Chiamata al modello (nuovo SDK)
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=[
+                types.Part.from_uri(
+                    file_uri=uploaded_file_ref.uri,
+                    mime_type="video/mp4",
+                ),
+                prompt,
+            ],
+            config=types.GenerateContentConfig(
+                response_mime_type="application/json",
+            ),
         )
 
-        # Il tuo codice originale analizza la risposta JSON
-        response_json = json.loads(response.text)
-        logger.info(f"Risposta JSON ricevuta da Gemini: {response_json}")
-        return response_json
+        raw = response.text.strip().replace("```json", "").replace("```", "")
+        d = json.loads(raw)
 
-    except json.JSONDecodeError:
-        logger.error(f"Errore: La risposta di Gemini non è un JSON valido. Risposta ricevuta: {response.text}")
-        st.error("Errore: L'API Gemini ha restituito una risposta non valida (non JSON). Controlla il prompt o i limiti.")
-        return None
-    except Exception as e:
-        logger.error(f"Errore durante la chiamata a Gemini: {e}")
-        st.error(f"Errore durante la comunicazione con l'API Gemini: {e}")
-        return None
+        # Audio-driven refinement
+        ai_start = float(d.get("start", 0))
+        audio_peak = get_audio_peak(p, start_hint=ai_start)
+        d["start_ai"] = ai_start
+        d["start"] = audio_peak
+        d.update({"path": p, "name": f.name, "include": True})
+        return d
 
-# ─────────────────────────────────────────
-# FUNZIONE PRINCIPALE PER L'ELABORAZIONE VIDEO
-# ─────────────────────────────────────────
-
-def process_video(video_path: str, cat: str, prompt_template: str) -> list:
-    """
-    Elabora il video per trovare clip di highlight usando Gemini e moviepy.
-    """
-    highlights = []
-    temp_files_to_cleanup = [video_path] # Aggiunge il video stesso alla lista di pulizia
-
-    try:
-        # 1. Ottieni i momenti chiave dal modello AI
-        gemini_data = get_gemini_response(prompt_template, cat, video_path)
-
-        if not gemini_data:
-            st.error("Impossibile ottenere dati da Gemini. Interruzione elaborazione.")
-            return highlights
-
-        # Estrai i momenti chiave (assumendo che ci sia una lista di momenti)
-        # Il tuo prompt chiede un singolo JSON, quindi dobbiamo adattarlo se ci sono più momenti
-        # O se la risposta è una lista di oggetti JSON.
-        # Per ora, assumiamo che gemini_data sia un singolo oggetto con 'start'
-        
-        # Se gemini_data è un dizionario con 'start':
-        if isinstance(gemini_data, dict) and "start" in gemini_data:
-            start_time = gemini_data["start"]
-            reason = gemini_data.get("reason", "Momento chiave trovato")
-            music_suggestions = gemini_data.get("music", ["trend_italia"]) # Default
-            
-            # Aggiungi come highlight singolo
-            highlights.append({
-                "start": start_time,
-                "end": start_time + 5, # Assumiamo una durata fissa di 5 secondi per ora
-                "reason": reason,
-                "music": music_suggestions,
-                "cat": cat
-            })
-        # Se gemini_data è una LISTA di dizionari (più probabile per più clip)
-        elif isinstance(gemini_data, list):
-            for item in gemini_data:
-                if isinstance(item, dict) and "start" in item:
-                    start_time = item["start"]
-                    reason = item.get("reason", "Momento chiave trovato")
-                    music_suggestions = item.get("music", ["trend_italia"])
-                    
-                    # Assumiamo una durata fissa per la clip (es. 5 secondi)
-                    # Dovresti magari calcolare la fine basandoti sulla durata del video o sul picco audio
-                    end_time = start_time + 5 # Durata fissa di 5 secondi come esempio
-                    
-                    highlights.append({
-                        "start": start_time,
-                        "end": end_time,
-                        "reason": reason,
-                        "music": music_suggestions,
-                        "cat": cat
-                    })
-        else:
-            logger.warning(f"Formato risposta Gemini inatteso: {gemini_data}")
-            st.warning("Formato risposta Gemini inatteso. Controlla il prompt.")
-            return highlights
-
-        # Ordina gli highlight per tempo di inizio
-        highlights.sort(key=lambda x: x["start"])
-
-        # 2. Estrai le clip video usando moviepy
-        clips = []
-        with VideoFileClip(video_path) as video:
-            duration = video.duration
-            for highlight in highlights:
-                start = max(0.0, highlight["start"])
-                end = min(duration, highlight["end"]) # Assicura che non vada oltre la durata del video
-
-                if end > start: # Assicurati che la clip abbia una durata valida
-                    clip = video.subclip(start, end)
-                    clips.append(clip)
-                    temp_files_to_cleanup.append(clip.filename) # Se moviepy crea file temporanei
-
-        # 3. Concatenale
-        final_clip = concatenate_videoclips(clips)
-
-        # 4. Aggiungi musica (logica da implementare completamente)
-        # Per ora, non aggiungiamo musica per semplicità.
-        # La logica di scelta musica e composizione audio andrebbe qui.
-
-        # 5. Salva il video finale
-        output_filename = f"highlight_{cat.replace(' ', '_')}_{int(time.time())}.mp4"
-        output_path = os.path.join(tempfile.gettempdir(), output_filename) # Salva in directory temporanea
-        
-        # Esporta il video finale
-        # Potresti voler specificare codec, bitrate, fps, ecc.
-        final_clip.write_videofile(output_path, codec="libx264", audio_codec="aac")
-        temp_files_to_cleanup.append(output_path) # Aggiungi il file di output alla lista pulizia
-
-        logger.info(f"Video highlight generato: {output_path}")
-        return output_path # Ritorna il percorso del file generato
-
-    except Exception as e:
-        logger.error(f"Errore critico durante l'elaborazione video: {e}")
-        st.error(f"Errore critico durante l'elaborazione video: {e}")
-        return [] # Ritorna lista vuota in caso di errore
+    except Exception as err:
+        cleanup_files([p])
+        return {"error": str(err), "name": f.name, "path": None}
 
     finally:
-        # Pulisci tutti i file temporanei creati durante l'elaborazione
-        cleanup_files(temp_files_to_cleanup)
+        # Elimina il file da Gemini cloud
+        if uploaded_file_ref:
+            try:
+                client.files.delete(name=uploaded_file_ref.name)
+            except Exception:
+                pass
 
 
-# ─────────────────────────────────────────
-# INTERFACCIA UTENTE STREAMLIT
-# ─────────────────────────────────────────
+def render_sizzle(
+    data_to_use: list,
+    plat: str,
+    ctype: str,
+    clip_duration: float,
+    add_watermark: bool,
+    watermark_text: str,
+    audio_path: str | None,
+) -> str | None:
+    """Rendering finale MoviePy 2.x."""
+    tw, th = FMT[plat][ctype]
+    clips = []
+    progress_bar = st.progress(0)
 
-def sidebar():
-    with st.sidebar:
-        st.markdown("<div class='sidebar-logo'>ViralLab<span>Pro</span></div>", unsafe_allow_html=True)
-        st.markdown("<div class='sidebar-version'>Video Highlights AI</div>", unsafe_allow_html=True)
-
-        st.sidebar.subheader("Parametri Video")
-
-        # Caricamento file video
-        uploaded_file = st.file_uploader(
-            "Carica il tuo video",
-            type=["mp4", "mov", "avi"], # Tipi di file video supportati
-            help="Carica un file video (MP4, MOV, AVI) per l'analisi."
-        )
-
-        # Scelta categoria
-        cat = st.selectbox(
-            "Categoria del Video",
-            options=["drop", "acuto", "brindisi", "emozione forte", "musica", "sport", "altri"],
-            index=0,
-            help="Seleziona la categoria principale per affinare la ricerca del momento di picco."
-        )
-
-        # Prompt personalizzabile
-        prompt_template = st.text_area(
-            "Prompt per l'AI (JSON Output):",
-            value=DEFAULT_PROMPT.format(cat=cat.lower()), # Inizializza con valore di default basato sulla categoria
-            height=200,
-            help="Il prompt guida l'AI. Richiede output JSON con 'start', 'reason', 'music'."
-        )
-
-        # Parametri per l'elaborazione (es. lunghezza clip)
-        clip_duration = st.slider(
-            "Durata Clip Highlight (secondi)",
-            min_value=2, max_value=15, value=5, step=1,
-            help="Durata desiderata per ogni clip highlight estratta."
-        )
-        # Qui potresti aggiungere altri slider/input per parametri di moviepy se necessario
-
-        process_button = st.button("⚡ Genera Highlights", type="primary")
-
-        return uploaded_file, cat, prompt_template, clip_duration, process_button
-
-def main_content(uploaded_file, cat, prompt_template, clip_duration, process_button):
-    st.title("Generatore di Highlights Video con AI")
-    st.markdown("Carica il tuo video, seleziona la categoria e lascia che l'AI trovi i momenti più "
-                "energetici per te!")
-
-    if process_button:
-        if not uploaded_file:
-            st.warning("Per favore, carica un file video.")
-            return
-        if not cat:
-            st.warning("Per favore, seleziona una categoria.")
-            return
-        if not prompt_template:
-            st.warning("Il prompt non può essere vuoto.")
-            return
-
-        # Salva il file video caricato temporaneamente
-        video_path = None
+    for i, d in enumerate(data_to_use[:MAX_CLIPS]):
         try:
-            video_path = save_uploaded_file(uploaded_file)
-            st.info(f"Video temporaneamente salvato come: {video_path}")
+            v = VideoFileClip(d["path"])
+            start_time = float(d.get("start", 0))
+            dur = float(d.get("clip_duration_override", clip_duration))
+            end_time = min(start_time + dur, v.duration)
 
-            # Avvia l'elaborazione
-            with st.spinner("Analisi del video e generazione highlights in corso... ⏳"):
-                # Chiama la funzione principale di elaborazione
-                # Passa il percorso del video, la categoria, il prompt e la durata della clip
-                output_path_or_list = process_video(video_path, cat, prompt_template)
+            # Subclip + resize + crop  (API MoviePy 2.x)
+            clip = v.subclipped(start_time, end_time).resized(height=th)
+            if clip.w > tw:
+                clip = clip.cropped(x_center=clip.w / 2, width=tw)
 
-                # Gestisci il risultato
-                if isinstance(output_path_or_list, str) and output_path_or_list.endswith(".mp4"):
-                    # Se è stato generato un singolo file video
-                    final_video_path = output_path_or_list
-                    st.success("🎉 Video highlights generato con successo!")
-                    
-                    # Mostra il video generato
-                    st.video(final_video_path)
+            # Fade in/out via effects
+            clip = clip.with_effects([FadeIn(0.15), FadeOut(0.15)])
 
-                    # Offri il download
-                    with open(final_video_path, "rb") as video_file:
-                        st.download_button(
-                            label="Scarica il tuo video highlights",
-                            data=video_file,
-                            file_name=os.path.basename(final_video_path),
-                            mime="video/mp4"
+            # Watermark (opzionale)
+            if add_watermark and watermark_text.strip():
+                try:
+                    txt = (
+                        TextClip(
+                            text=watermark_text,
+                            font_size=28,
+                            color="white",
+                            font="DejaVu-Sans-Bold",
+                            stroke_color="black",
+                            stroke_width=1,
                         )
-                    logger.info(f"Video highlights pronto per il download: {final_video_path}")
+                        .with_position(("right", "bottom"))
+                        .with_duration(clip.duration)
+                    )
+                    clip = CompositeVideoClip([clip, txt])
+                except Exception:
+                    pass  # ImageMagick non disponibile: skip watermark
 
-                elif isinstance(output_path_or_list, list) and len(output_path_or_list) > 0:
-                    # Gestisci il caso in cui process_video ritorni una lista di clip (se implementato diversamente)
-                    st.warning("Output multipli non supportati in questa versione, si attende un singolo file video.")
-                    logger.warning("process_video ha ritornato una lista, ma si attende un singolo file.")
+            clips.append(clip)
+            v.close()
 
-                else:
-                    # Errore o nessun highlight trovato
-                    st.error("Si è verificato un errore durante la generazione degli highlights o nessun momento chiave è stato trovato.")
-                    logger.error("Generazione highlights fallita o nessun risultato.")
+        except Exception as err:
+            st.warning(f"Errore clip {d.get('name')}: {err}")
+            continue
 
-        except Exception as e:
-            logger.error(f"Errore nel blocco principale di elaborazione: {e}")
-            st.error(f"Si è verificato un errore imprevisto: {e}")
-        finally:
-            # Assicurati che i file temporanei vengano puliti alla fine
-            cleanup_files([video_path] + (output_path_or_list if isinstance(output_path_or_list, list) else []))
+        progress_bar.progress((i + 1) / len(data_to_use))
+
+    if not clips:
+        return None
+
+    sizzle = concatenate_videoclips(clips, method="compose")
+    total_duration = sizzle.duration
+
+    # Colonna sonora (opzionale)
+    if audio_path and os.path.exists(audio_path):
+        try:
+            bg = AudioFileClip(audio_path).subclipped(0, total_duration)
+            bg = bg.with_effects([AudioFadeOut(1.5)])
+            bg = bg.with_volume_scaled(0.85)
+
+            if sizzle.audio:
+                orig = sizzle.audio.with_volume_scaled(0.3)
+                final_audio = CompositeAudioClip([bg, orig])
+            else:
+                final_audio = bg
+
+            sizzle = sizzle.with_audio(final_audio)
+        except Exception as err:
+            st.warning(f"Errore audio colonna sonora: {err}")
+
+    out = f"highlights_{int(time.time())}.mp4"
+    sizzle.write_videofile(
+        out,
+        codec="libx264",
+        audio_codec="aac",
+        fps=24,
+        preset="ultrafast",
+        threads=2,
+        logger=None,
+    )
+
+    for c in clips:
+        try:
+            c.close()
+        except Exception:
+            pass
+    sizzle.close()
+    return out
 
 
-if __name__ == "__main__":
-    # Chiama le funzioni per la sidebar e il contenuto principale
-    uploaded_file, cat, prompt_template, clip_duration, process_button = sidebar()
-    main_content(uploaded_file, cat, prompt_template, clip_duration, process_button)
+# ─────────────────────────────────────────
+# SIDEBAR
+# ─────────────────────────────────────────
+with st.sidebar:
+    st.markdown("""
+    <div class="sidebar-logo">HIGHLIGHTS<br><span>VIDEO</span> DETECTOR</div>
+    <div class="sidebar-version">v3.0 · Gemini 2.0 Flash</div>
+    """, unsafe_allow_html=True)
+
+    st.markdown('<div class="section-label">// contenuto</div>', unsafe_allow_html=True)
+    cat = st.selectbox("Tipo", ["DJ Set", "Musica dal Vivo", "Karaoke", "Wedding Music", "Wedding Band"],
+                       label_visibility="collapsed")
+
+    st.markdown('<div class="section-label">// target</div>', unsafe_allow_html=True)
+    plat = st.selectbox("Piattaforma", ["Instagram", "TikTok", "Facebook"],
+                        label_visibility="collapsed")
+    ctype = st.radio("Formato", ["Reels", "Storie", "Post"], horizontal=True,
+                     label_visibility="collapsed")
+    limit_sec = PLATFORM_LIMITS[plat][ctype]
+    st.markdown(
+        f'<div style="font-family:\'DM Mono\',monospace;font-size:0.65rem;color:#3D4455;margin-top:0.3rem;">'
+        f'MAX {limit_sec}s · {plat} {ctype}</div>',
+        unsafe_allow_html=True,
+    )
+
+    st.markdown('<div class="section-label">// clip</div>', unsafe_allow_html=True)
+    clip_duration = st.slider("Durata clip (s)", 1.0, 6.0, 2.8, 0.1, label_visibility="collapsed")
+
+    st.markdown('<div class="section-label">// branding</div>', unsafe_allow_html=True)
+    add_watermark = st.toggle("Watermark", value=False)
+    watermark_text = ""
+    if add_watermark:
+        watermark_text = st.text_input("Testo watermark", value="#HighlightsVD", label_visibility="collapsed")
+
+    st.markdown('<div class="section-label">// audio</div>', unsafe_allow_html=True)
+    audio_upload = st.file_uploader("Colonna sonora", type=["mp3", "wav", "aac", "m4a"],
+                                    label_visibility="collapsed")
+
+    st.markdown('<div class="section-label">// ai prompt</div>', unsafe_allow_html=True)
+    with st.expander("Personalizza prompt"):
+        custom_prompt = st.text_area("Prompt AI", value=DEFAULT_PROMPT, height=160,
+                                     label_visibility="collapsed")
+
+    st.markdown('<div class="section-label">// upload</div>', unsafe_allow_html=True)
+    files = st.file_uploader("Video grezzi", type=["mp4", "mov"],
+                              accept_multiple_files=True, label_visibility="collapsed")
+
+# ─────────────────────────────────────────
+# HERO
+# ─────────────────────────────────────────
+st.markdown("""
+<div class="hero-block">
+    <div class="hero-eyebrow">⚡ AI-Powered · Real-time Analysis</div>
+    <div class="hero-title">HIGHLIGHTS<br><span>VIDEO</span> DETECTOR</div>
+    <div class="hero-sub">Gemini 2.0 Flash · Audio peak detection · Montaggio automatico</div>
+    <div class="hero-line"></div>
+</div>
+""", unsafe_allow_html=True)
+
+# ─────────────────────────────────────────
+# LOGICA PRINCIPALE
+# ─────────────────────────────────────────
+if files:
+    for f in files:
+        if f.size > 500 * 1024 * 1024:
+            st.markdown(
+                f'<div class="platform-warning">⚠ {f.name} · {f.size/1024/1024:.0f} MB — file molto grande</div>',
+                unsafe_allow_html=True,
+            )
+
+    if len(files) > MAX_CLIPS:
+        st.markdown(
+            f'<div class="platform-warning">↳ {len(files)} file caricati · verranno processati i primi {MAX_CLIPS}</div>',
+            unsafe_allow_html=True,
+        )
+
+    # Salva audio colonna sonora
+    audio_file_path = None
+    if audio_upload:
+        ext = os.path.splitext(audio_upload.name)[1]
+        with tempfile.NamedTemporaryFile(delete=False, suffix=ext) as af:
+            af.write(audio_upload.getvalue())
+            audio_file_path = af.name
+        st.session_state["audio_path"] = audio_file_path
+
+    # ── STEP 1: SCANSIONE ──────────────────
+    st.markdown('<div class="section-label">// step 01 — analisi</div>', unsafe_allow_html=True)
+    col_a, col_b = st.columns([3, 1])
+    with col_a:
+        scan_btn = st.button("⚡ SCANSIONA HIGHLIGHTS", type="primary")
+    with col_b:
+        st.markdown(
+            f'<div style="font-family:\'DM Mono\',monospace;font-size:0.65rem;color:#3D4455;padding-top:0.8rem;">'
+            f'{len(files)} FILE · {cat.upper()}</div>',
+            unsafe_allow_html=True,
+        )
+
+    if scan_btn:
+        all_h, temp_files_scan, errors = [], [], []
+
+        with st.status("Analisi in corso...", expanded=True) as stt:
+            st.markdown('<div class="dot-live"></div> scansione in corso...', unsafe_allow_html=True)
+
+            # Parallelo: max 3 thread per non saturare l'API Gemini
+            with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
+                future_map = {
+                    executor.submit(scan_single_video, f, custom_prompt, cat): f
+                    for f in files[:MAX_CLIPS]
+                }
+                for future in concurrent.futures.as_completed(future_map):
+                    f_ref = future_map[future]
+                    try:
+                        result = future.result()
+                        if "error" in result:
+                            errors.append(result)
+                            st.markdown(f'`✗ {result["name"]}` — {result["error"]}')
+                        else:
+                            all_h.append(result)
+                            if result["path"]:
+                                temp_files_scan.append(result["path"])
+                            st.markdown(
+                                f'`✓ {result["name"]}` '
+                                f'— AI: `{result.get("start_ai", 0):.1f}s` '
+                                f'→ peak: `{result["start"]:.1f}s`'
+                            )
+                    except Exception as err:
+                        errors.append({"name": f_ref.name, "error": str(err)})
+
+            st.session_state["h_list"] = all_h
+            st.session_state["temp_files"] = temp_files_scan
+            st.session_state["scan_errors"] = errors
+            stt.update(label=f"✓ {len(all_h)} highlights rilevati", state="complete")
+
+    # ── RETRY selettivo ─────────────────────
+    if "scan_errors" in st.session_state and st.session_state["scan_errors"]:
+        for err_item in st.session_state["scan_errors"]:
+            col1, col2 = st.columns([5, 1])
+            col1.markdown(
+                f'<div class="platform-warning">✗ {err_item["name"]} — {err_item.get("error", "")}</div>',
+                unsafe_allow_html=True,
+            )
+            if col2.button("↺ RETRY", key=f"retry_{err_item['name']}"):
+                matching = [f for f in files if f.name == err_item["name"]]
+                if matching:
+                    with st.spinner(f"Retry {err_item['name']}..."):
+                        result = scan_single_video(matching[0], custom_prompt, cat)
+                        if "error" not in result:
+                            st.session_state["h_list"].append(result)
+                            if result["path"]:
+                                st.session_state["temp_files"].append(result["path"])
+                            st.session_state["scan_errors"] = [
+                                e for e in st.session_state["scan_errors"]
+                                if e["name"] != err_item["name"]
+                            ]
+                            st.rerun()
+                        else:
+                            st.error(f"Ancora errore: {result['error']}")
+
+    # ── STEP 2: EDITOR HIGHLIGHTS ──────────
+    if "h_list" in st.session_state and st.session_state["h_list"]:
+        h_list = st.session_state["h_list"]
+
+        st.markdown('<div class="section-label">// step 02 — editor highlights</div>', unsafe_allow_html=True)
+
+        for h in h_list:
+            st.markdown(f"""
+            <div class="highlight-card">
+                <div class="hc-name">▸ {h['name']}</div>
+                <div class="hc-reason">{h.get('reason', 'N/D')}</div>
+                <div class="hc-meta">
+                    AI: <span>{h.get('start_ai', 0):.1f}s</span> &nbsp;·&nbsp;
+                    AUDIO PEAK: <span>{h.get('start', 0):.1f}s</span> &nbsp;·&nbsp;
+                    MUSICA: {h.get('music', '—')}
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+        with st.expander("✏  MODIFICA PARAMETRI CLIP"):
+            updated_list = []
+            for i, h in enumerate(h_list):
+                cols = st.columns([0.5, 1, 1, 1])
+                include = cols[0].checkbox("ON", value=h.get("include", True), key=f"inc_{i}")
+                cols[0].caption(h["name"][:18])
+                new_start = cols[1].number_input("Inizio (s)", min_value=0.0,
+                                                  value=float(h.get("start", 0)),
+                                                  step=0.5, key=f"start_{i}")
+                new_dur = cols[2].number_input("Durata (s)", min_value=0.5, max_value=10.0,
+                                               value=float(clip_duration), step=0.1, key=f"dur_{i}")
+                cols[3].caption(f"💡 {h.get('reason', '')[:60]}")
+                h_copy = dict(h)
+                h_copy.update({"include": include, "start": new_start, "clip_duration_override": new_dur})
+                updated_list.append(h_copy)
+            st.session_state["h_list"] = updated_list
+
+        # Stima durata e warning
+        active = [d for d in st.session_state["h_list"] if d.get("include", True)]
+        estimated_sec = sum(d.get("clip_duration_override", clip_duration) for d in active)
+
+        if estimated_sec > limit_sec:
+            st.markdown(
+                f'<div class="platform-warning">⚠ DURATA STIMATA {estimated_sec:.0f}s — LIMITE {plat} {ctype}: {limit_sec}s</div>',
+                unsafe_allow_html=True,
+            )
+        else:
+            st.markdown(
+                f'<div class="platform-ok">✓ DURATA STIMATA {estimated_sec:.0f}s — ENTRO IL LIMITE {plat} {ctype} ({limit_sec}s)</div>',
+                unsafe_allow_html=True,
+            )
+
+        if h_list:
+            st.markdown(
+                f'<div class="platform-ok">🎵 MUSICA SUGGERITA: {h_list[0].get("music", "N/D")}</div>',
+                unsafe_allow_html=True,
+            )
+
+        # ── STEP 3: RENDER ──────────────────
+        st.markdown('<div class="section-label">// step 03 — render</div>', unsafe_allow_html=True)
+        col_r, col_info = st.columns([3, 1])
+        with col_r:
+            render_btn = st.button("▶ GENERA MONTAGGIO FINALE", type="primary")
+        with col_info:
+            st.markdown(
+                f'<div style="font-family:\'DM Mono\',monospace;font-size:0.65rem;color:#3D4455;padding-top:0.8rem;">'
+                f'{len(active)} CLIP · {plat.upper()} {ctype.upper()}</div>',
+                unsafe_allow_html=True,
+            )
+
+        if render_btn:
+            data_to_use = [d for d in st.session_state["h_list"] if d.get("include", True)]
+            audio_path = st.session_state.get("audio_path") or audio_file_path
+
+            with st.status("rendering...", expanded=False):
+                final_video = render_sizzle(
+                    data_to_use, plat, ctype, clip_duration,
+                    add_watermark, watermark_text, audio_path,
+                )
+
+            if final_video and os.path.exists(final_video):
+                st.markdown('<div class="section-label">// output</div>', unsafe_allow_html=True)
+                st.video(final_video)
+
+                if "session_history" not in st.session_state:
+                    st.session_state["session_history"] = []
+                st.session_state["session_history"].append({
+                    "time": time.strftime("%H:%M:%S"),
+                    "platform": f"{plat} {ctype}",
+                    "clips": len(data_to_use),
+                    "duration": f"{estimated_sec:.0f}s",
+                })
+
+                with open(final_video, "rb") as fr:
+                    st.download_button(
+                        "↓ SCARICA VIDEO",
+                        fr,
+                        file_name="highlights_output.mp4",
+                        mime="video/mp4",
+                    )
+                try:
+                    os.unlink(final_video)
+                except Exception:
+                    pass
+            else:
+                st.error("Errore nella generazione del video.")
+
+    # ── STORICO ─────────────────────────────
+    if "session_history" in st.session_state and st.session_state["session_history"]:
+        st.markdown('<div class="section-label">// sessione</div>', unsafe_allow_html=True)
+        for entry in reversed(st.session_state["session_history"]):
+            st.markdown(
+                f'<div class="history-entry">'
+                f'{entry["time"]} · {entry["platform"]} · {entry["clips"]} clip · {entry["duration"]}'
+                f'</div>',
+                unsafe_allow_html=True,
+            )
+
+# ── PULIZIA ─────────────────────────────────
+if "temp_files" in st.session_state and st.session_state["temp_files"]:
+    st.markdown('<div style="margin-top:3rem;"></div>', unsafe_allow_html=True)
+    if st.button("✕ PULISCI FILE TEMPORANEI"):
+        cleanup_files(st.session_state["temp_files"])
+        if "audio_path" in st.session_state:
+            cleanup_files([st.session_state.pop("audio_path")])
+        for key in ["temp_files", "h_list", "scan_errors"]:
+            st.session_state.pop(key, None)
+        st.success("File temporanei eliminati.")

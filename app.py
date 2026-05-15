@@ -55,19 +55,47 @@ html, body,
 [data-testid="stSidebar"] * { font-family: 'DM Mono', monospace !important; }
 [data-testid="stSidebarContent"] { padding: 1.2rem 1rem !important; }
 
-/* ── Nascondi bottone collapse sidebar e testo "keyboard_double" ── */
-[data-testid="collapsedControl"],
-button[data-testid="baseButton-headerNoPadding"],
-[class*="collapsedControl"] {
-    display: none !important;
-}
-
-/* ── Header Streamlit completamente nascosto ── */
+/* ── Header Streamlit nascosto ma collapsedControl visibile ── */
 header[data-testid="stHeader"] {
-    display: none !important;
-    height: 0 !important;
+    background: transparent !important;
+    height: 3rem !important;
 }
 #MainMenu, footer { visibility: hidden !important; }
+
+/* ── Pulsante collapse sidebar: sempre visibile e stilizzato ── */
+[data-testid="collapsedControl"] {
+    display: flex !important;
+    visibility: visible !important;
+    position: fixed !important;
+    left: 0 !important;
+    top: 50% !important;
+    transform: translateY(-50%) !important;
+    z-index: 9999 !important;
+    background: #00F0D4 !important;
+    border-radius: 0 6px 6px 0 !important;
+    width: 24px !important;
+    height: 48px !important;
+    align-items: center !important;
+    justify-content: center !important;
+    cursor: pointer !important;
+    box-shadow: 2px 0 8px rgba(0,240,212,0.3) !important;
+}
+[data-testid="collapsedControl"] svg {
+    color: #080A0F !important;
+    width: 14px !important;
+    height: 14px !important;
+}
+
+/* ── Nascondi testo "keyboard_double" nell header ── */
+header [data-testid="stToolbar"],
+header button span,
+[data-testid="baseButton-headerNoPadding"] span {
+    display: none !important;
+}
+button[data-testid="baseButton-headerNoPadding"] {
+    color: transparent !important;
+    font-size: 0 !important;
+}
 
 /* ── Scrollbar ── */
 ::-webkit-scrollbar { width: 4px; }
@@ -171,13 +199,20 @@ button[kind="primary"]:hover { background: #00D4BB !important; }
     background: #0C0E15 !important; border: 1px dashed #1A1F2E !important;
     border-radius: 4px !important;
 }
-/* Nascondi doppio testo nel file uploader */
-.stFileUploader [data-testid="stFileUploaderDropzone"] p { display: none !important; }
-.stFileUploader [data-testid="stFileUploaderDropzone"]::after {
-    content: 'Trascina o clicca per caricare';
-    font-family: 'DM Mono', monospace; font-size: 0.7rem; color: #3D4455;
-    display: block; text-align: center; padding: 0.8rem;
+/* File uploader - nasconde tutti i testi Streamlit default */
+.stFileUploader [data-testid="stFileUploaderDropzone"] { padding: 0.6rem !important; }
+.stFileUploader [data-testid="stFileUploaderDropzone"] > div { display: none !important; }
+.stFileUploader [data-testid="stFileUploaderDropzone"] button {
+    background: transparent !important;
+    border: 1px solid #1A1F2E !important;
+    color: #3D4455 !important;
+    font-family: 'DM Mono', monospace !important;
+    font-size: 0.68rem !important;
+    letter-spacing: 0.08em !important;
+    width: 100% !important;
+    padding: 0.5rem !important;
 }
+.stFileUploader [data-testid="stFileUploaderDropzone"] small { display: none !important; }
 
 /* Labels */
 .stSelectbox label, .stRadio label, .stSlider label,
@@ -187,6 +222,17 @@ button[kind="primary"]:hover { background: #00D4BB !important; }
     font-size: 0.65rem !important; letter-spacing: 0.1em !important;
     text-transform: uppercase !important; color: #5A6070 !important;
 }
+
+/* Expander - rimuovi icona arrow e normalizza testo */
+.streamlit-expanderHeader {
+    gap: 0.4rem !important;
+}
+.streamlit-expanderHeader svg {
+    width: 14px !important; height: 14px !important;
+    color: #3D4455 !important;
+}
+/* Nasconde eventuali icone materiali che trapelano come testo */
+[data-testid="stExpanderToggleIcon"] { display: none !important; }
 
 /* Radio orizzontale */
 .stRadio [data-testid="stWidgetLabel"] { display: none !important; }
@@ -240,6 +286,11 @@ hr { border-color: #1A1F2E !important; margin: 1rem 0 !important; }
     font-family: 'DM Mono', monospace; font-size: 0.7rem; color: #3D4455;
     border-left: 2px solid #1A1F2E; padding: 0.35rem 0.7rem; margin-bottom: 0.4rem;
 }
+.hc-insight {
+    font-family: 'DM Mono', monospace; font-size: 0.7rem;
+    color: #FF9500; margin-top: 0.5rem;
+    border-left: 2px solid #FF950066; padding-left: 0.5rem;
+}
 </style>
 """, unsafe_allow_html=True)
 
@@ -261,11 +312,17 @@ FMT = {
 }
 
 DEFAULT_PROMPT = (
-    "Sei un video editor professionista di Bari specializzato in contenuti virali Puglia. "
-    "Analizza questo video di {cat} e trova il momento di picco energetico "
-    "(drop, acuto, brindisi, emozione forte). "
+    "Sei un video editor e social media strategist professionista di Bari, "
+    "specializzato in contenuti virali per il mercato Puglia e Italia. "
+    "Puoi analizzare sia video PROPRI che video di COMPETITOR per estrarne insight strategici. "
+    "Analizza questo video di {cat} e: "
+    "1) Trova il momento di picco energetico (drop, acuto, brindisi, emozione forte, interazione pubblico). "
+    "2) Valuta la qualita della ripresa e del montaggio. "
+    "3) Identifica eventuali strategie social vincenti (ritmo, hashtag visibili, call-to-action, testo overlay). "
     "Rispondi SOLO con JSON valido, senza markdown, senza backtick: "
-    '{"start": float, "reason": "breve spiegazione", "music": "3 canzoni trend Italia"}'
+    '{"start": float, "reason": "momento chiave e perche funziona", '
+    '"music": "3 canzoni trend Italia adatte", '
+    '"competitor_insight": "cosa fa bene questo video che puoi replicare o migliorare"}'
 )
 
 # ─────────────────────────────────────────
@@ -474,7 +531,7 @@ def render_mashup(
 with st.sidebar:
     st.markdown("""
     <div class="sidebar-logo">HIGHLIGHTS<br><span>VIDEO</span> DETECTOR</div>
-    <div class="sidebar-version">v4.0 · Gemini 2.5 Flash</div>
+    <div class="sidebar-version">v4.0 · Gemini 2.5 Flash · Own &amp; Competitor</div>
     """, unsafe_allow_html=True)
 
     # ── Configurazione ──
@@ -522,7 +579,7 @@ with st.sidebar:
         type=["mp3", "wav", "aac", "m4a"],
         label_visibility="collapsed")
 
-    with st.expander("🧠 Prompt AI"):
+    with st.expander("Prompt AI"):
         custom_prompt = st.text_area("Prompt", value=DEFAULT_PROMPT, height=140,
                                      label_visibility="collapsed")
         st.session_state["_prompt"] = custom_prompt
@@ -546,7 +603,7 @@ st.markdown("""
 <div class="hero-block">
     <div class="hero-eyebrow">⚡ AI-Powered · Real-time Analysis</div>
     <div class="hero-title">HIGHLIGHTS<br><span>VIDEO</span> DETECTOR</div>
-    <div class="hero-sub">Gemini 2.5 Flash · Audio peak detection · Mashup automatico</div>
+    <div class="hero-sub">Gemini 2.5 Flash · Analisi propri video &amp; competitor · Mashup automatico</div>
     <div class="hero-line"></div>
 </div>
 """, unsafe_allow_html=True)
@@ -577,11 +634,26 @@ if file_data:
             unsafe_allow_html=True)
 
     if scan_btn:
+        total_files = min(len(file_data), MAX_CLIPS)
+        progress_bar = st.progress(0, text="Preparazione analisi...")
+        completed = [0]  # lista mutabile per aggiornamento da thread
+
         with st.status("Analisi in corso...", expanded=True) as status:
             all_h, paths, errors = [], [], []
+
+            def scan_with_progress(f):
+                result = scan_video(f, prompt, cat)
+                completed[0] += 1
+                pct = completed[0] / total_files
+                progress_bar.progress(
+                    pct,
+                    text=f"Scansione {completed[0]}/{total_files} · {f['name'][:30]}..."
+                )
+                return result
+
             with concurrent.futures.ThreadPoolExecutor(max_workers=3) as ex:
                 fut_map = {
-                    ex.submit(scan_video, f, prompt, cat): f
+                    ex.submit(scan_with_progress, f): f
                     for f in file_data[:MAX_CLIPS]
                 }
                 for fut in concurrent.futures.as_completed(fut_map):
@@ -604,6 +676,7 @@ if file_data:
             st.session_state["_highlights"]  = all_h
             st.session_state["_temp_paths"]  = paths
             st.session_state["_scan_errors"] = errors
+            progress_bar.progress(1.0, text=f"✓ Completato — {len(all_h)} highlights trovati")
             status.update(label=f"✓ {len(all_h)} highlights trovati", state="complete")
 
 # ─────────────────────────────────────────
@@ -639,6 +712,11 @@ if st.session_state.get("_highlights"):
     st.markdown('<div class="section-label">// step 02 — highlights</div>', unsafe_allow_html=True)
 
     for h in h_list:
+        insight = h.get('competitor_insight', '')
+        insight_html = (
+            f'<div class="hc-insight">💡 {insight}</div>'
+            if insight else ""
+        )
         st.markdown(f"""
         <div class="highlight-card">
             <div class="hc-name">▸ {h['name']}</div>
@@ -648,9 +726,10 @@ if st.session_state.get("_highlights"):
                 AUDIO PEAK: <span>{h.get('start',0):.1f}s</span> &nbsp;·&nbsp;
                 MUSICA: {h.get('music','—')}
             </div>
+            {insight_html}
         </div>""", unsafe_allow_html=True)
 
-    with st.expander("✏ MODIFICA PARAMETRI"):
+    with st.expander("Modifica Parametri Clip"):
         updated = []
         for i, h in enumerate(h_list):
             c = st.columns([0.5, 1, 1, 2])

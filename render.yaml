@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: highlights-video-detector
+    runtime: python
+    buildCommand: "pip install -r requirements.txt"
+    startCommand: >
+      streamlit run app.py
+      --server.port $PORT
+      --server.address 0.0.0.0
+      --server.headless true
+      --server.maxUploadSize 512
+      --server.maxMessageSize 512
+    envVars:
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: IMAGEIO_FFMPEG_EXE
+        value: ffmpeg
+      - key: PYTHON_VERSION
+        value: "3.11.9"

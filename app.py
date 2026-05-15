@@ -305,26 +305,36 @@ def cleanup(paths: list):
             pass
 
 def get_audio_peak(video_path: str, start_hint: float = 0.0) -> float:
+    """Analizza SOLO la finestra ±10s attorno all hint — non carica il video intero."""
     try:
         v = VideoFileClip(video_path)
         if v.audio is None:
             v.close(); return start_hint
         duration = v.duration
-        step = 0.5
-        ts = np.arange(0, max(0, duration - step), step)
-        if len(ts) == 0:
+        # Analizza solo ±10s attorno al punto suggerito da Gemini
+        win_start = max(0.0, start_hint - 10.0)
+        win_end   = min(duration, start_hint + 10.0)
+        if win_end <= win_start:
             v.close(); return start_hint
+
+        audio_clip = v.audio.subclipped(win_start, win_end)
+        step = 0.5
+        ts   = np.arange(0, win_end - win_start - step, step)
+        if len(ts) == 0:
+            audio_clip.close(); v.close(); return start_hint
+
         rms = []
         for t in ts:
-            chunk = v.audio.subclipped(t, min(t + step, duration))
-            samples = chunk.to_soundarray(fps=22050)
+            chunk = audio_clip.subclipped(t, min(t + step, win_end - win_start))
+            samples = chunk.to_soundarray(fps=11025)  # frequenza ridotta per meno RAM
             rms.append(float(np.sqrt(np.mean(samples ** 2))))
+            del samples  # libera subito
+
+        audio_clip.close()
         v.close()
-        i0 = int(max(0, start_hint - 10) / step)
-        i1 = int(min(duration, start_hint + 10) / step)
-        window = rms[i0:i1]
-        peak = (i0 + int(np.argmax(window))) if window else int(np.argmax(rms))
-        return float(ts[min(peak, len(ts) - 1)])
+
+        peak_local = int(np.argmax(rms))
+        return float(win_start + ts[min(peak_local, len(ts) - 1)])
     except Exception:
         return start_hint
 
@@ -402,21 +412,23 @@ def render_mashup(
                 s = float(h.get("start", 0))
                 e = min(s + dur, v.duration)
                 if e <= s: v.close(); continue
-                clip = v.subclipped(s, e).resized(height=th)
-                if clip.w > tw:
-                    clip = clip.cropped(x_center=clip.w / 2, width=tw)
-                clip = clip.with_effects([FadeIn(0.15), FadeOut(0.15)])
-                if add_wm and wm_text.strip():
-                    try:
-                        txt = (TextClip(text=wm_text, font_size=26, color="white",
-                                        font="DejaVu-Sans-Bold", stroke_color="black", stroke_width=1)
-                               .with_position(("right", "bottom"))
-                               .with_duration(clip.duration))
-                        clip = CompositeVideoClip([clip, txt])
-                    except Exception: pass
-                clips.append(clip)
-                accumulated += clip.duration
+
+                # Esporta il singolo clip in un file temporaneo
+                # → evita di tenere tutti i frame in RAM contemporaneamente
+                clip_tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".mp4").name
+                clip_raw = v.subclipped(s, e).resized(height=th)
+                if clip_raw.w > tw:
+                    clip_raw = clip_raw.cropped(x_center=clip_raw.w / 2, width=tw)
+                clip_raw = clip_raw.with_effects([FadeIn(0.15), FadeOut(0.15)])
+                clip_raw.write_videofile(clip_tmp, codec="libx264", audio_codec="aac",
+                                         fps=24, preset="ultrafast", threads=1, logger=None)
+                clip_raw.close()
                 v.close()
+
+                # Ricarica solo il riferimento al file (pochissima RAM)
+                clip_ref = VideoFileClip(clip_tmp)
+                clips.append((clip_ref, clip_tmp))
+                accumulated += clip_ref.duration
                 bar.progress(min(accumulated / target, 1.0))
             except Exception as err:
                 st.warning(f"Clip {h.get('name')}: {err}")
@@ -424,7 +436,10 @@ def render_mashup(
 
     if not clips: return None
 
-    sizzle = concatenate_videoclips(clips, method="compose")
+    clip_refs = [c for c, _ in clips]
+    clip_tmps = [t for _, t in clips]
+
+    sizzle = concatenate_videoclips(clip_refs, method="compose")
 
     if audio_path and os.path.exists(audio_path):
         try:
@@ -441,10 +456,16 @@ def render_mashup(
     out = f"mashup_{int(time.time())}.mp4"
     sizzle.write_videofile(out, codec="libx264", audio_codec="aac",
                            fps=24, preset="ultrafast", threads=2, logger=None)
-    for c in clips:
+
+    # Chiudi e pulisci tutto
+    for c in clip_refs:
         try: c.close()
         except Exception: pass
     sizzle.close()
+    for t in clip_tmps:
+        try: os.unlink(t)
+        except Exception: pass
+
     return out
 
 # ─────────────────────────────────────────

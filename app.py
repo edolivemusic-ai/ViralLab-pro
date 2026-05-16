@@ -29,6 +29,25 @@ st.set_page_config(
 # ─────────────────────────────────────────
 st.markdown("""
 <style>
+/* ── Blocca font Material Icons che causa testo "keyboard_double" e "arrow_right" ── */
+@font-face {
+    font-family: 'Material Icons';
+    src: local('Material Icons');
+    unicode-range: U+E000-F8FF;
+    font-display: block;
+}
+.material-icons,
+.material-symbols-rounded,
+[class*="material-icon"],
+[class*="material-symbol"] {
+    font-family: inherit !important;
+    font-size: 0 !important;
+    visibility: hidden !important;
+    width: 0 !important;
+    overflow: hidden !important;
+}
+
+/* ── Font ── */
 @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=DM+Mono:wght@300;400;500&family=Outfit:wght@300;400;600;800&display=swap');
 
 /* ── Reset ── */
@@ -55,46 +74,39 @@ html, body,
 [data-testid="stSidebar"] * { font-family: 'DM Mono', monospace !important; }
 [data-testid="stSidebarContent"] { padding: 1.2rem 1rem !important; }
 
-/* ── Header Streamlit nascosto ma collapsedControl visibile ── */
+/* ── Header: completamente rimosso ── */
 header[data-testid="stHeader"] {
-    background: transparent !important;
-    height: 3rem !important;
+    display: none !important;
+    height: 0 !important;
+    overflow: hidden !important;
 }
-#MainMenu, footer { visibility: hidden !important; }
+#MainMenu, footer { display: none !important; }
 
-/* ── Pulsante collapse sidebar: sempre visibile e stilizzato ── */
+/* ── Pulsante apri/chiudi sidebar: fisso sul bordo sinistro, sempre visibile ── */
 [data-testid="collapsedControl"] {
     display: flex !important;
     visibility: visible !important;
+    opacity: 1 !important;
     position: fixed !important;
     left: 0 !important;
     top: 50% !important;
     transform: translateY(-50%) !important;
-    z-index: 9999 !important;
+    z-index: 999999 !important;
     background: #00F0D4 !important;
-    border-radius: 0 6px 6px 0 !important;
-    width: 24px !important;
-    height: 48px !important;
+    border-radius: 0 8px 8px 0 !important;
+    width: 20px !important;
+    height: 56px !important;
     align-items: center !important;
     justify-content: center !important;
     cursor: pointer !important;
-    box-shadow: 2px 0 8px rgba(0,240,212,0.3) !important;
+    border: none !important;
+    box-shadow: 3px 0 12px rgba(0,240,212,0.4) !important;
+    padding: 0 !important;
 }
-[data-testid="collapsedControl"] svg {
+[data-testid="collapsedControl"] * {
     color: #080A0F !important;
-    width: 14px !important;
-    height: 14px !important;
-}
-
-/* ── Nascondi testo "keyboard_double" nell header ── */
-header [data-testid="stToolbar"],
-header button span,
-[data-testid="baseButton-headerNoPadding"] span {
-    display: none !important;
-}
-button[data-testid="baseButton-headerNoPadding"] {
-    color: transparent !important;
-    font-size: 0 !important;
+    font-size: 14px !important;
+    font-family: sans-serif !important;
 }
 
 /* ── Scrollbar ── */
@@ -134,7 +146,7 @@ button[data-testid="baseButton-headerNoPadding"] {
 }
 .section-label::after { content: ''; flex: 1; height: 1px; background: #1A1F2E; }
 
-/* ── Sidebar section label (margini ridotti) ── */
+/* ── Sidebar section label ── */
 .sidebar-section {
     font-family: 'DM Mono', monospace; font-size: 0.58rem;
     letter-spacing: 0.25em; color: #00F0D4; text-transform: uppercase;
@@ -149,10 +161,15 @@ button[data-testid="baseButton-headerNoPadding"] {
     border-left: 3px solid #00F0D4; border-radius: 6px;
     padding: 0.9rem 1.1rem; margin-bottom: 0.6rem;
 }
-.highlight-card .hc-name { font-family: 'DM Mono', monospace; font-size: 0.75rem; color: #00F0D4; margin-bottom: 0.25rem; }
-.highlight-card .hc-reason { font-size: 0.82rem; color: #8891A4; margin-bottom: 0.2rem; }
-.highlight-card .hc-meta { font-family: 'DM Mono', monospace; font-size: 0.68rem; color: #3D4455; }
-.highlight-card .hc-meta span { color: #FF2D55; }
+.hc-name { font-family: 'DM Mono', monospace; font-size: 0.75rem; color: #00F0D4; margin-bottom: 0.25rem; }
+.hc-reason { font-size: 0.82rem; color: #8891A4; margin-bottom: 0.2rem; }
+.hc-meta { font-family: 'DM Mono', monospace; font-size: 0.68rem; color: #3D4455; }
+.hc-meta span { color: #FF2D55; }
+.hc-insight {
+    font-family: 'DM Mono', monospace; font-size: 0.7rem;
+    color: #FF9500; margin-top: 0.5rem;
+    border-left: 2px solid #FF950055; padding-left: 0.5rem;
+}
 
 /* ── Status box ── */
 .platform-warning {
@@ -168,7 +185,7 @@ button[data-testid="baseButton-headerNoPadding"] {
     font-size: 0.75rem; color: #00F0D4; margin: 0.8rem 0;
 }
 
-/* ── Bottoni ── */
+/* ── Bottoni Streamlit ── */
 .stButton > button {
     background: transparent !important;
     border: 1px solid #00F0D4 !important;
@@ -186,7 +203,7 @@ button[kind="primary"] {
 }
 button[kind="primary"]:hover { background: #00D4BB !important; }
 
-/* ── Input / Select / Slider ── */
+/* ── Input / Select ── */
 .stSelectbox [data-baseweb="select"] > div,
 .stTextInput > div > div > input,
 .stTextArea > div > div > textarea,
@@ -195,26 +212,56 @@ button[kind="primary"]:hover { background: #00D4BB !important; }
     color: #E8E8E0 !important; font-family: 'DM Mono', monospace !important;
     font-size: 0.78rem !important; border-radius: 4px !important;
 }
-.stFileUploader > div {
-    background: #0C0E15 !important; border: 1px dashed #1A1F2E !important;
-    border-radius: 4px !important;
-}
-/* File uploader - nasconde tutti i testi Streamlit default */
-.stFileUploader [data-testid="stFileUploaderDropzone"] { padding: 0.6rem !important; }
-.stFileUploader [data-testid="stFileUploaderDropzone"] > div { display: none !important; }
-.stFileUploader [data-testid="stFileUploaderDropzone"] button {
-    background: transparent !important;
-    border: 1px solid #1A1F2E !important;
-    color: #3D4455 !important;
-    font-family: 'DM Mono', monospace !important;
-    font-size: 0.68rem !important;
-    letter-spacing: 0.08em !important;
-    width: 100% !important;
-    padding: 0.5rem !important;
-}
-.stFileUploader [data-testid="stFileUploaderDropzone"] small { display: none !important; }
 
-/* Labels */
+/* ── File uploader ── */
+[data-testid="stFileUploaderDropzone"] {
+    background: #0C0E15 !important;
+    border: 1px dashed #1A1F2E !important;
+    border-radius: 6px !important;
+    padding: 0.8rem !important;
+}
+[data-testid="stFileUploaderDropzone"] span,
+[data-testid="stFileUploaderDropzone"] p,
+[data-testid="stFileUploaderDropzone"] small {
+    font-family: 'DM Mono', monospace !important;
+    font-size: 0.65rem !important;
+    color: #3D4455 !important;
+}
+/* Nasconde SOLO le icone Material nel file uploader, non il testo */
+[data-testid="stFileUploaderDropzone"] .material-icons,
+[data-testid="stFileUploaderDropzone"] .material-symbols-rounded {
+    display: none !important;
+}
+[data-testid="stFileUploaderDropzone"] button {
+    background: #0C0E15 !important;
+    border: 1px solid #1A1F2E !important;
+    color: #5A6070 !important;
+    font-family: 'DM Mono', monospace !important;
+    font-size: 0.65rem !important;
+    border-radius: 3px !important;
+}
+
+/* ── File caricati (badge nomi file) ── */
+[data-testid="stFileUploaderFile"] {
+    background: #0E1118 !important;
+    border: 1px solid #1A1F2E !important;
+    border-radius: 4px !important;
+    padding: 0.4rem 0.6rem !important;
+    margin-bottom: 0.3rem !important;
+}
+[data-testid="stFileUploaderFile"] span,
+[data-testid="stFileUploaderFileName"] {
+    font-family: 'DM Mono', monospace !important;
+    font-size: 0.7rem !important;
+    color: #00F0D4 !important;
+}
+[data-testid="stFileUploaderFileData"] {
+    font-family: 'DM Mono', monospace !important;
+    font-size: 0.62rem !important;
+    color: #3D4455 !important;
+}
+
+/* ── Labels ── */
 .stSelectbox label, .stRadio label, .stSlider label,
 .stTextInput label, .stTextArea label, .stFileUploader label,
 .stToggle label, .stNumberInput label, .stCheckbox label {
@@ -223,45 +270,55 @@ button[kind="primary"]:hover { background: #00D4BB !important; }
     text-transform: uppercase !important; color: #5A6070 !important;
 }
 
-/* Expander - rimuovi icona arrow e normalizza testo */
-.streamlit-expanderHeader {
-    gap: 0.4rem !important;
+/* ── Expander ── */
+[data-testid="stExpander"] summary {
+    background: #0C0E15 !important;
+    border: 1px solid #1A1F2E !important;
+    border-radius: 4px !important;
+    font-family: 'DM Mono', monospace !important;
+    font-size: 0.72rem !important;
+    color: #8891A4 !important;
+    list-style: none !important;
+    padding: 0.5rem 0.8rem !important;
 }
-.streamlit-expanderHeader svg {
-    width: 14px !important; height: 14px !important;
-    color: #3D4455 !important;
+[data-testid="stExpander"] summary svg { color: #3D4455 !important; }
+/* Nasconde testo "arrow_right" che trapela dall expander */
+[data-testid="stExpander"] summary .material-icons,
+[data-testid="stExpander"] summary .material-symbols-rounded {
+    display: none !important;
 }
-/* Nasconde eventuali icone materiali che trapelano come testo */
-[data-testid="stExpanderToggleIcon"] { display: none !important; }
-
-/* Radio orizzontale */
-.stRadio [data-testid="stWidgetLabel"] { display: none !important; }
-.stRadio > div { flex-direction: row !important; gap: 0.5rem !important; }
-
-/* Expander */
-.streamlit-expanderHeader {
-    background: #0C0E15 !important; border: 1px solid #1A1F2E !important;
-    border-radius: 4px !important; font-family: 'DM Mono', monospace !important;
-    font-size: 0.72rem !important; color: #8891A4 !important;
-}
-.streamlit-expanderContent {
-    background: #0C0E15 !important; border: 1px solid #1A1F2E !important;
+[data-testid="stExpanderDetails"] {
+    background: #0C0E15 !important;
+    border: 1px solid #1A1F2E !important;
     border-top: none !important;
+    padding: 0.8rem !important;
 }
 
-/* Status */
+/* ── Radio orizzontale ── */
+.stRadio [data-testid="stWidgetLabel"] { display: none !important; }
+.stRadio > div[role="radiogroup"] { flex-direction: row !important; gap: 0.5rem !important; }
+
+/* ── Status ── */
 [data-testid="stStatus"] {
     background: #0C0E15 !important; border-color: #1A1F2E !important;
     font-family: 'DM Mono', monospace !important; font-size: 0.75rem !important;
 }
 
-/* Number input */
-.stNumberInput input { background: #0C0E15 !important; border-color: #1A1F2E !important; color: #E8E8E0 !important; }
+/* ── Slider ── */
+[data-testid="stSlider"] [data-baseweb="slider"] [role="slider"] {
+    background: #00F0D4 !important;
+}
+[data-testid="stSlider"] div[data-baseweb="slider"] > div {
+    background: #1A1F2E !important;
+}
+[data-testid="stSlider"] div[data-baseweb="slider"] > div > div {
+    background: #00F0D4 !important;
+}
 
-/* Divider */
+/* ── Divider ── */
 hr { border-color: #1A1F2E !important; margin: 1rem 0 !important; }
 
-/* Sidebar logo */
+/* ── Sidebar logo ── */
 .sidebar-logo {
     font-family: 'Bebas Neue', sans-serif;
     font-size: 1.3rem; letter-spacing: 0.08em; color: #FFFFFF; margin-bottom: 0.1rem;
@@ -273,24 +330,14 @@ hr { border-color: #1A1F2E !important; margin: 1rem 0 !important; }
     margin-bottom: 0.5rem;
 }
 
-/* Dot live */
-.dot-live {
-    display: inline-block; width: 6px; height: 6px; border-radius: 50%;
-    background: #00F0D4; margin-right: 5px; vertical-align: middle;
-    animation: pulse 1.6s ease infinite;
-}
-@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
-
-/* History */
+/* ── History ── */
 .history-entry {
     font-family: 'DM Mono', monospace; font-size: 0.7rem; color: #3D4455;
     border-left: 2px solid #1A1F2E; padding: 0.35rem 0.7rem; margin-bottom: 0.4rem;
 }
-.hc-insight {
-    font-family: 'DM Mono', monospace; font-size: 0.7rem;
-    color: #FF9500; margin-top: 0.5rem;
-    border-left: 2px solid #FF950066; padding-left: 0.5rem;
-}
+
+/* ── Pulse animation ── */
+@keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
 </style>
 """, unsafe_allow_html=True)
 

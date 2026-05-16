@@ -409,38 +409,11 @@ def cleanup(paths: list):
             pass
 
 def get_audio_peak(video_path: str, start_hint: float = 0.0) -> float:
-    """Analizza SOLO la finestra ±10s attorno all hint — non carica il video intero."""
-    try:
-        v = VideoFileClip(video_path)
-        if v.audio is None:
-            v.close(); return start_hint
-        duration = v.duration
-        # Analizza solo ±10s attorno al punto suggerito da Gemini
-        win_start = max(0.0, start_hint - 10.0)
-        win_end   = min(duration, start_hint + 10.0)
-        if win_end <= win_start:
-            v.close(); return start_hint
-
-        audio_clip = v.audio.subclipped(win_start, win_end)
-        step = 0.5
-        ts   = np.arange(0, win_end - win_start - step, step)
-        if len(ts) == 0:
-            audio_clip.close(); v.close(); return start_hint
-
-        rms = []
-        for t in ts:
-            chunk = audio_clip.subclipped(t, min(t + step, win_end - win_start))
-            samples = chunk.to_soundarray(fps=11025)  # frequenza ridotta per meno RAM
-            rms.append(float(np.sqrt(np.mean(samples ** 2))))
-            del samples  # libera subito
-
-        audio_clip.close()
-        v.close()
-
-        peak_local = int(np.argmax(rms))
-        return float(win_start + ts[min(peak_local, len(ts) - 1)])
-    except Exception:
-        return start_hint
+    """
+    Rimossa analisi audio locale per risparmiare RAM su Render free tier.
+    Gemini 2.5 Flash è già preciso nel trovare il momento di picco.
+    """
+    return start_hint
 
 def scan_video(file_dict: dict, prompt_tmpl: str, cat: str) -> dict:
     p = save_to_disk(file_dict)
@@ -659,11 +632,17 @@ st.markdown("""
 # STEP 1 — Scansione (solo se ci sono file)
 # ─────────────────────────────────────────
 if file_data:
+    MAX_FILE_MB = 200
+    file_data = [f for f in file_data if f["size"] <= MAX_FILE_MB * 1024 * 1024]
+    st.session_state["_files"] = file_data  # aggiorna dopo filtro
+
     for f in file_data:
-        if f["size"] > 500 * 1024 * 1024:
-            st.markdown(
-                f'<div class="platform-warning">⚠ {f["name"]} · {f["size"]/1024/1024:.0f} MB — file molto grande</div>',
-                unsafe_allow_html=True)
+        mb = f["size"] / 1024 / 1024
+        color = "#FF2D55" if mb > 150 else "#00F0D4"
+        st.markdown(
+            f'<div class="platform-ok" style="border-left-color:{color}">📹 {f["name"]} · {mb:.0f} MB</div>',
+            unsafe_allow_html=True)
+
     if len(file_data) > MAX_CLIPS:
         st.markdown(
             f'<div class="platform-warning">↳ verranno processati solo i primi {MAX_CLIPS} file</div>',
